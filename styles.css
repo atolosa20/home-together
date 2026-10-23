@@ -263,3 +263,17 @@ input[type=number]{background:var(--sunk);border:1px solid transparent;border-ra
 .spend-line{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;margin-top:12px;text-decoration:none;color:inherit}
 .spend-line b{font-family:var(--display);font-size:1.15rem;font-variant-numeric:tabular-nums}
 nav.tabs a span:not(.badge){font-size:.68rem}
+
+/* weather for walks */
+.wx{padding:12px 14px;display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.wx-temp{font-weight:700;white-space:nowrap}
+.wx-line{font-weight:600}
+.wx-line.rainy{color:var(--c-appt)}
+.wx-hours{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.wx-h{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:46px;padding:6px 4px;border-radius:10px;background:var(--sunk);font-size:.78rem;color:var(--muted)}
+.wx-h span:nth-child(2){font-size:1.1rem}
+.wx-h.wet{background:color-mix(in srgb,var(--c-appt) 18%,var(--surface));color:var(--ink);font-weight:700}
+.wx-places{display:flex;flex-direction:column;gap:6px}
+.wx-places .btn{text-align:left}
+.row-form{display:flex;gap:8px}
+.row-form input{flex:1;min-width:0}

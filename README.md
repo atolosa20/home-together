@@ -134,7 +134,9 @@ Notifications need iOS 16.4 or newer, with the app opened from the home-screen i
 - **Privacy:** database rules make sure each person only ever sees their own home's data.
   The anon key in `config.js` can't get around that. Files (receipts, tickets, dog photos) are in a private
   storage bucket with the same rule, and open through links that expire.
-- **No connection:** changes are kept on the phone and sent when the connection is back; the header shows how many are waiting.
+- **No connection:** the phone keeps a copy of the home's data (text only, a few hundred KB), so the app opens with
+  everything even with no signal. Changes are kept on the phone and sent when the connection is back; the header shows
+  how many are waiting. Photos and attached files need a connection to open.
 - **Shopping:** three parts. **List** for groceries, with your most-bought items as one-tap suggestions.
   Each item can say which supermarket it's from (or any shop); tap a shop at the top to see just its items, and the
   app remembers the usual shop for each item.
@@ -146,6 +148,10 @@ Notifications need iOS 16.4 or newer, with the app opened from the home-screen i
 - **Dogs:** a profile per dog (photo, age, breed, weight, food, vet, chip, health). One tap logs a walk or a meal and
   tells your partner. Each dog has its own medicines with dose, how often and a reminder time; both phones get a
   reminder when one is due, and **Given** tells your partner which dog got what.
+- **Weather for walks:** choose your town in **⚙ Settings** (shared by both of you) and the Dogs page shows the rain for
+  the next 12 hours, from [Open-Meteo](https://open-meteo.com) (free, no account). Each person can turn on **Notify me
+  before it rains**: about an hour before rain starts (07:00–21:00, not if the dogs were just walked), and the rainy
+  hours in the morning summary.
 - **Walks from an iPhone Shortcut:** Settings has a personal link for the Shortcuts app, for example to log a walk when
   you leave home. iPhone doesn't let apps see AirTags, so this is the closest thing to automatic.
 - **Spending:** a tab with each month's total (and the change from last month), what each of you paid, bars per
@@ -204,7 +210,7 @@ If the PC is off on Sunday, it runs the next time it's on and connected.
 | `supabase/schema.sql` | Database tables and security rules (run once) |
 | `supabase/functions/notify` | Sends "your partner added…" notifications |
 | `supabase/functions/daily` | Sends the morning reminder |
-| `supabase/functions/remind` | Reminders before plans, and dog medicines when due |
+| `supabase/functions/remind` | Reminders before plans, dog medicines when due, and rain coming soon |
 | `supabase/functions/walk` | Logs a dog walk from an iPhone Shortcut |
 | `supabase/functions/backup` | Read-only export used by the weekly PC backup |
 | `backup/backup.ps1` | The weekly backup script (installed in `%LOCALAPPDATA%\HomeTogetherBackup`) |

@@ -1,7 +1,8 @@
 // Reminders before a calendar plan (the evening before from 19:00, or one hour before),
-// and dog medicines on the days they are due.
+// dog medicines on the days they are due, and rain coming soon (for walks).
 // Called every 15 minutes by the scheduler in supabase/reminders.sql.
 import { addDays, adminClient, cors, Lang, madridNow, occursOn, sendToHousehold } from "../_shared/push.ts";
+import { forecast, spells, wet } from "../_shared/weather.ts";
 
 const TEXT: Record<Lang, { title: string; day: string; hour: string }> = {
   en: { title: "Reminder", day: "Tomorrow", hour: "In 1 hour" },
@@ -23,6 +24,11 @@ const euros = (lang: Lang, n: number) => new Intl.NumberFormat(lang === "es" ? "
 const MED: Record<Lang, { title: string; body: (dog: string, med: string) => string; low: (n: number) => string }> = {
   en: { title: "Medicine", body: (d, m) => `Time for ${d}'s ${m}`, low: (n) => ` · only ${n} left, buy more` },
   es: { title: "Medicina", body: (d, m) => `Toca darle a ${d}: ${m}`, low: (n) => ` · quedan ${n}, hay que comprar más` },
+};
+
+const RAIN: Record<Lang, { title: string; body: (from: string, to: string, p: number) => string }> = {
+  en: { title: "Rain soon", body: (f, t, p) => `Rain from ${f} to ${t} (${p}%). Good time to walk the dogs now.` },
+  es: { title: "Va a llover", body: (f, t, p) => `Lluvia de ${f} a ${t} (${p} %). Buen momento para sacar a los perros.` },
 };
 
 // "HH:MM" one hour earlier, not before midnight.
@@ -99,6 +105,32 @@ Deno.serve(async (req) => {
       tag: `med-${m.id}`,
       url: "./#dogs",
     }));
+  }
+
+  // Rain: when the next hour turns wet after a dry one (07:00–21:00), tell whoever turned on rain alerts,
+  // unless someone walked the dogs in the last hour. Once per rainy spell.
+  if (now >= "07:00" && now < "21:00") {
+    const { data: wanted } = await admin.from("members").select("household_id, user_id").eq("rain_alerts", true);
+    const homes = new Map<string, Set<string>>();
+    for (const m of wanted ?? []) homes.set(m.household_id, (homes.get(m.household_id) ?? new Set()).add(m.user_id));
+    const { data: places } = homes.size
+      ? await admin.from("households").select("id, lat, lon").in("id", [...homes.keys()]).not("lat", "is", null)
+      : { data: [] };
+    for (const h of places ?? []) {
+      const hours = await forecast(h.lat, h.lon);
+      const i = hours?.findIndex((x) => x.t === `${today}T${now.slice(0, 2)}:00`) ?? -1;
+      if (!hours || i < 0 || wet(hours[i]) || !hours[i + 1] || !wet(hours[i + 1])) continue;
+      const rain = spells(hours.slice(i + 1))[0];
+      const { count: walked } = await admin.from("dog_log").select("id", { count: "exact", head: true })
+        .eq("household_id", h.id).eq("kind", "walk").gte("at", new Date(Date.now() - 60 * 60000).toISOString());
+      if (walked) continue;
+      const { error } = await admin.from("weather_alerts").insert({ household_id: h.id, on_date: today, starts: rain.from });
+      if (error) continue;
+      const users = homes.get(h.id)!;
+      sent += await sendToHousehold(admin, h.id, (lang, userId) => users.has(userId)
+        ? { title: RAIN[lang].title, body: RAIN[lang].body(rain.from, rain.to, rain.peak), tag: "rain", url: "./#dogs" }
+        : null);
+    }
   }
 
   return new Response(JSON.stringify({ sent }), { headers: { ...cors, "Content-Type": "application/json" } });
