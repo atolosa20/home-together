@@ -25,7 +25,7 @@
   <p data-t="welcomeSub"></p>
   <form id="fAuth">
     <label><span data-t="email"></span><input type="email" id="aEmail" autocomplete="email" required></label>
-    <label><span data-t="password"></span><input type="password" id="aPass" autocomplete="current-password" required minlength="6"></label>
+    <label><span data-t="password"></span><span class="pw"><input type="password" id="aPass" autocomplete="current-password" required minlength="6"><button type="button" class="pw-eye" id="aShow" aria-pressed="false"></button></span></label>
     <div class="err" id="aErr" hidden></div>
     <div class="ok-msg" id="aOk" hidden></div>
     <button class="btn" id="aSubmit"></button>

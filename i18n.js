@@ -22,7 +22,7 @@ window.I18N = {
     synced:"Synced", reconnecting:"Reconnecting…", offline:"Offline",
     // sign in
     welcome:"Home Together", welcomeSub:"Your shared home: shopping, chores, calendar and the dogs.",
-    email:"Email", password:"Password", signIn:"Sign in", signUp:"Create account",
+    email:"Email", password:"Password", showPw:"Show", hidePw:"Hide", showPwLong:"Show password", hidePwLong:"Hide password", signIn:"Sign in", signUp:"Create account",
     haveAccount:"Already have an account? Sign in", noAccount:"New here? Create an account",
     checkEmail:"Account created. Check your email, tap the confirmation link, then sign in here.",
     badLogin:"Wrong email or password, or the email isn't confirmed yet.", pwShort:"Use at least 6 characters for the password.",
@@ -152,7 +152,7 @@ window.I18N = {
     ourHome:"Nuestra casa", rename:"Cambiar nombre", homeName:"Nombre de la casa", settings:"Ajustes",
     synced:"Sincronizado", reconnecting:"Reconectando…", offline:"Sin conexión",
     welcome:"Home Together", welcomeSub:"Vuestra casa compartida: compra, tareas, calendario y los perros.",
-    email:"Correo", password:"Contraseña", signIn:"Entrar", signUp:"Crear cuenta",
+    email:"Correo", password:"Contraseña", showPw:"Mostrar", hidePw:"Ocultar", showPwLong:"Mostrar contraseña", hidePwLong:"Ocultar contraseña", signIn:"Entrar", signUp:"Crear cuenta",
     haveAccount:"¿Ya tienes cuenta? Entra", noAccount:"¿Eres nuevo? Crea una cuenta",
     checkEmail:"Cuenta creada. Revisa tu correo, pulsa el enlace de confirmación y luego entra aquí.",
     badLogin:"Correo o contraseña incorrectos, o el correo aún no está confirmado.", pwShort:"Usa al menos 6 caracteres en la contraseña.",
