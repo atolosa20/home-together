@@ -60,6 +60,10 @@ h2{font-family:var(--display);font-weight:700;font-size:1.15rem;margin:0;letter-
 .row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--line);min-height:52px}
 .row:first-child{border-top:0}
 .row .main{flex:1;min-width:0}
+.edit-row{flex-direction:column;align-items:stretch;gap:10px;background:var(--sunk)}
+.edit-row input[type=text]{background:var(--surface)}
+.edit-grid{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.edit-grid select,.edit-grid input[type=date]{width:auto;background:var(--surface)}
 .row .t{font-weight:700;overflow-wrap:anywhere}
 .row .s{font-size:.8rem;color:var(--muted)}
 .done .t{text-decoration:line-through;color:var(--muted);font-weight:600}

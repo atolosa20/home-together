@@ -275,14 +275,42 @@ function ownerTag(c, compact) {
   const label = c.rotate ? (o ? ownerLabel(c, o) : T("whoTurns")) : o ? ownerLabel(c, o) : T("whoAnyone");
   return ` · <button class="who" data-act="who" data-id="${esc(c.id)}" aria-label="${esc(T("whoLabel"))}: ${esc(label)}">${esc(label)}</button>`;
 }
+const whoOptions = sel => `<option value="">${esc(T("whoAnyone"))}</option>${S.members.map(m => `<option value="${esc(m.user_id)}" ${sel === m.user_id ? "selected" : ""}>${esc(m.user_id === me ? T("you_") : m.display_name || T("partner"))}</option>`).join("")}${S.members.length > 1 ? `<option value="turns" ${sel === "turns" ? "selected" : ""}>${esc(T("whoTurns"))}</option>` : ""}`;
+// Edit a routine in place: name, how often, who, dogs, and when it's next due.
+function routineForm(c) {
+  const every = REPEAT.filter(n => n > 0); if (!every.includes(c.every)) every.push(c.every);
+  return `<form class="row edit-row" id="fChoreEdit" data-id="${esc(c.id)}">
+    <input type="text" id="ceTitle" value="${esc(choreTitle(c))}" aria-label="${esc(T("ceName"))}" required autocomplete="off">
+    <div class="edit-grid">
+      <label class="inline"><span>${T("ceEvery")}</span><select id="ceEvery">${every.sort((a, b) => a - b).map(n => `<option value="${n}" ${n === c.every ? "selected" : ""}>${esc(repeatLabel(n))}</option>`).join("")}</select></label>
+      <label class="inline"><span>${T("whoLabel")}</span><select id="ceWho">${whoOptions(c.rotate ? "turns" : c.assigned_to || "")}</select></label>
+      <label class="inline"><span>${T("ceNext")}</span><input type="date" id="ceNext" value="${esc(c.due)}" required></label>
+      <label class="toggle"><input type="checkbox" id="ceDog" ${c.dog ? "checked" : ""}> ${T("dogsBox")}</label>
+    </div>
+    <div class="kv"><span>${delBtn("chores", c.id)}</span><span class="kv"><button type="button" class="btn ghost small" data-act="chore-cancel">${T("cancel")}</button><button class="btn small">${T("save")}</button></span></div>
+  </form>`;
+}
+function saveRoutine(f) {
+  const c = find(S.chores, f.dataset.id); if (!c) return;
+  const title = $("#ceTitle").value.trim(), every = Number($("#ceEvery").value), w = $("#ceWho").value, next = $("#ceNext").value;
+  if (!title || !next) return;
+  const values = { every, dog: $("#ceDog").checked, assigned_to: w && w !== "turns" ? w : null, rotate: w === "turns" };
+  if (title !== choreTitle(c)) Object.assign(values, { title, key: null }); // a renamed starter chore keeps the new name in both languages
+  // A new date for next time: count from it (keeping the real "last done" when there is one).
+  if (next !== c.due) Object.assign(values, c.last_done ? { last_done: addDays(next, -every) } : { start_date: next });
+  else if (!c.last_done && every !== c.every) values.start_date = c.due;
+  ui.choreEdit = null;
+  save({ t: "chores", kind: "update", id: c.id, values }, "saved");
+}
 function routineRow(c, compact) {
+  if (!compact && ui.choreEdit === c.id) return routineForm(c);
   const last = c.last_done ? T("lastDone")(fmtDay(c.last_done), c.last_by ? who(c.last_by) : "") : T("notYet");
   return `<div class="row">
     <div class="main"><div class="t">${c.dog ? `<span class="paw">${IC.paw}</span> ` : ""}${esc(choreTitle(c))}${compact ? ownerTag(c, true) : ""}</div>
       <div class="s">${esc(repeatLabel(c.every))} · ${esc(last)}${compact ? "" : ownerTag(c)}</div></div>
     ${duePill(c.due)}
     <button class="btn small" data-act="did" data-id="${esc(c.id)}">${T("done")}</button>
-    ${compact ? "" : delBtn("chores", c.id)}
+    ${compact ? "" : `<button class="btn ghost small" data-act="chore-edit" data-id="${esc(c.id)}">${T("editDog")}</button>`}
   </div>`;
 }
 function eventRow(e) {
@@ -436,7 +464,7 @@ function viewChores() {
   <form class="addbar" id="fChore">
     <input type="text" id="cTitle" class="grow" placeholder="${esc(T("cPlaceholder"))}" autocomplete="off" required>
     <select id="cEvery">${REPEAT.map(n => `<option value="${n}" ${n === 7 ? "selected" : ""}>${esc(repeatLabel(n))}</option>`).join("")}</select>
-    <select id="cWho" aria-label="${esc(T("whoLabel"))}"><option value="">${esc(T("whoAnyone"))}</option>${S.members.map(m => `<option value="${esc(m.user_id)}">${esc(m.user_id === me ? T("you_") : m.display_name || T("partner"))}</option>`).join("")}${S.members.length > 1 ? `<option value="turns">${esc(T("whoTurns"))}</option>` : ""}</select>
+    <select id="cWho" aria-label="${esc(T("whoLabel"))}">${whoOptions("")}</select>
     <label class="toggle"><input type="checkbox" id="cDog"> ${T("dogsBox")}</label>
     <button class="btn">${T("add")}</button>
   </form>
@@ -1124,6 +1152,8 @@ document.addEventListener("click", async ev => {
     case "log": logDogs(b.dataset.kind); return;
     case "med-given": medGiven(id); return;
     case "med-add": ui.medFor = id; render(); $("#mName")?.focus(); return;
+    case "chore-edit": $("#fChoreEdit")?.remove(); ui.choreEdit = id; render(); $("#ceTitle")?.focus(); return; // remove first: render() keeps typed values by id
+    case "chore-cancel": ui.choreEdit = null; render(); return;
     case "med-cancel": ui.medFor = null; render(); return;
     case "dog-edit": openDog(id); return;
     case "files": openFiles(b.dataset.kind, id, b.dataset.title); return;
@@ -1212,6 +1242,7 @@ document.addEventListener("submit", async ev => {
     $("#gName").value = ""; $("#gQty").value = ""; $("#gStore").value = ui.shopFilter;
     addGrocery(name, qty, ui.grocCat, store); $("#gName")?.focus();
   }
+  if (f.id === "fChoreEdit") saveRoutine(f);
   if (f.id === "fChore") {
     const title = v("cTitle"); if (!title) return; const every = Number(v("cEvery")), dog = $("#cDog").checked, w = v("cWho");
     $("#cTitle").value = ""; $("#cDog").checked = false;
