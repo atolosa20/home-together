@@ -36,6 +36,8 @@ const IC = {
 };
 const GROC_KEYS = ["veg", "bakery", "dairy", "meat", "pantry", "frozen", "drinks", "home", "dogs", "other"];
 const EV_COLORS = { home: "--c-home", dogs: "--c-dogs", people: "--c-people", appt: "--c-appt", bills: "--c-bills", travel: "--c-travel" };
+// Usual supermarkets; any other shop typed in is remembered and offered too.
+const STORES = ["Mercadona", "Bonpreu", "Lidl", "Carrefour", "Condis", "Caprabo", "Dia", "Consum", "Aldi", "Esclat", "Alcampo"];
 const NEED_KEYS = ["furniture", "tech", "home", "books", "clothes", "gifts", "other"];
 const SHOP_VIEWS = ["list", "needs", "past"];
 const MAX_FILE = 10 * 1024 * 1024;
@@ -81,10 +83,11 @@ const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPAB
 const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], home: null };
 let me = null, hid = null, channel = null, online = true;
 let tab = "today", calMonth = today().slice(0, 7), calSel = today(), pendingDelete = null;
-const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, authMode: "signin", setupMode: "create" };
+const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, authMode: "signin", setupMode: "create" };
 try {
   const g = localStorage.getItem("ht-grocCat"); if (GROC_KEYS.includes(g)) ui.grocCat = g;
   const s = localStorage.getItem("ht-shopView"); if (SHOP_VIEWS.includes(s)) ui.shopView = s;
+  ui.shopFilter = localStorage.getItem("ht-shopFilter") || "";
 } catch (e) {}
 
 function toast(k) { const t = $("#toast"); t.textContent = T(k) || k; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 1800); }
@@ -113,7 +116,7 @@ function loadQueue() { try { queue = JSON.parse(localStorage.getItem(qKey()) || 
 function storeQueue() { try { localStorage.setItem(qKey(), JSON.stringify(queue)); } catch (e) {} }
 
 const DEFAULTS = {
-  groceries: { qty: "", cat: "other", done: false },
+  groceries: { qty: "", cat: "other", store: "", done: false },
   chores: { every: 0, dog: false, done: false, last_done: null, last_by: null, assigned_to: null, rotate: false },
   events: { time: "", cat: "home", repeat: "", remind: "" },
   dogs: { breed: "", notes: "", birthday: null },
@@ -184,7 +187,7 @@ const TABLES = {
   attachments: () => sb.from("attachments").select("*").order("created_at"),
   dog_log: () => sb.from("dog_log").select("*").order("at", { ascending: false }).limit(100),
   dog_meds: () => sb.from("dog_meds").select("*").order("created_at"),
-  history: () => sb.from("grocery_history").select("name_key, name, cat, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
+  history: () => sb.from("grocery_history").select("name_key, name, cat, store, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
 };
 async function load(name) {
   const { data, error } = await TABLES[name]();
@@ -297,30 +300,49 @@ function viewToday() {
     <div class="card list">${ev.length ? ev.map(eventRow).join("") : `<div class="empty">${T("noPlans")}</div>`}</div></section>`;
 }
 
+const sameStore = (a, b) => (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
+const knownStores = () => {
+  const all = [...STORES, ...S.groceries.map(g => g.store), ...S.history.map(h => h.store)].map(x => (x || "").trim()).filter(Boolean);
+  return all.filter((x, i) => all.findIndex(y => sameStore(x, y)) === i).sort((a, b) => a.localeCompare(b));
+};
+// The shop used last time for this item, if any.
+const rememberedStore = name => S.history.find(h => h.name_key === name.trim().toLowerCase())?.store || "";
+
 function viewGroceries() {
-  const open = S.groceries.filter(g => !g.done), done = S.groceries.filter(g => g.done);
+  const all = S.groceries.filter(g => !g.done), done = S.groceries.filter(g => g.done), f = ui.shopFilter;
+  // Shopping at one shop: its items plus the "any shop" ones.
+  const open = f ? all.filter(g => !g.store || sameStore(g.store, f)) : all, hidden = all.length - open.length;
+  const shops = [...new Set(all.map(g => g.store).filter(Boolean).concat(f ? [f] : []))].filter((x, i, a) => a.findIndex(y => sameStore(x, y)) === i).sort((a, b) => a.localeCompare(b));
   const groups = GROC_KEYS.map(k => [k, open.filter(g => (GROC_KEYS.includes(g.cat) ? g.cat : "other") === k)]).filter(g => g[1].length);
-  const onList = new Set(open.map(g => g.name.trim().toLowerCase()));
+  const onList = new Set(all.map(g => g.name.trim().toLowerCase()));
   const often = S.history.filter(h => h.uses >= 2 && !onList.has(h.name_key)).slice(0, 10);
   const row = g => `<div class="row ${g.done ? "done" : ""}">
       <button class="check ${g.done ? "on" : ""}" data-act="groc" data-id="${esc(g.id)}" aria-label="${g.done ? T("putBack") : T("markBought")}">${g.done ? IC.tick : ""}</button>
-      <div class="main"><div class="t">${esc(g.name)}${g.qty ? ` <span class="chip">${esc(g.qty)}</span>` : ""}</div>${g.created_by && !g.done ? `<div class="s">${esc(T("addedBy")(who(g.created_by)))}</div>` : ""}</div>
+      <div class="main"><div class="t">${esc(g.name)}${g.qty ? ` <span class="chip">${esc(g.qty)}</span>` : ""}</div>
+        <div class="s">${g.done ? esc(g.store) : [g.created_by ? esc(T("addedBy")(who(g.created_by))) : "",
+          `<button class="who ${g.store ? "" : "faint"}" data-act="groc-store" data-id="${esc(g.id)}" aria-label="${esc(T("whichShop"))}">${esc(g.store || T("anyShop"))}</button>`].filter(Boolean).join(" · ")}</div></div>
       ${delBtn("groceries", g.id)}</div>`;
   return `
   <form class="addbar" id="fGroc">
     <input type="text" id="gName" class="grow" placeholder="${esc(T("gPlaceholder"))}" autocomplete="off" required>
     <input type="text" id="gQty" placeholder="${esc(T("qty"))}" style="flex:0 1 80px">
     <select id="gCat">${GROC_KEYS.map(k => `<option value="${k}" ${k === ui.grocCat ? "selected" : ""}>${esc(T("grocCats")[k])}</option>`).join("")}</select>
+    <input type="text" id="gStore" list="storeList" value="${esc(f)}" placeholder="${esc(T("anyShopPh"))}" autocomplete="off" style="flex:1 1 120px">
+    <datalist id="storeList">${knownStores().map(x => `<option value="${esc(x)}">`).join("")}</datalist>
     <button class="btn">${T("add")}</button>
   </form>
+  ${shops.length ? `<div class="shops" role="group" aria-label="${esc(T("shopFilterLbl"))}">
+    <button class="chip-btn" data-act="shop-filter" data-v="" aria-pressed="${!f}">${T("allShops")}</button>
+    ${shops.map(x => `<button class="chip-btn" data-act="shop-filter" data-v="${esc(x)}" aria-pressed="${sameStore(x, f)}">${esc(x)}</button>`).join("")}</div>` : ""}
+  ${hidden ? `<p class="hint" style="margin:6px 2px 0">${esc(T("otherShops")(hidden))} <button class="who" data-act="shop-filter" data-v="">${T("showAll")}</button></p>` : ""}
   ${often.length ? `<div class="often"><span class="eyebrow">${T("often")}</span>
-    ${often.map(h => `<button class="chip-btn" data-act="often" data-name="${esc(h.name)}" data-cat="${esc(h.cat)}">+ ${esc(h.name)}</button>`).join("")}</div>` : ""}
+    ${often.map(h => `<button class="chip-btn" data-act="often" data-name="${esc(h.name)}" data-cat="${esc(h.cat)}" data-store="${esc(h.store || "")}">+ ${esc(h.name)}${h.store ? ` <small>${esc(h.store)}</small>` : ""}</button>`).join("")}</div>` : ""}
   ${groups.length ? groups.map(([k, items]) => `<section class="sec"><span class="eyebrow">${esc(T("grocCats")[k])}</span><div class="card list">${items.map(row).join("")}</div></section>`).join("")
     : `<section class="sec"><div class="card"><div class="empty">${T("listEmpty")}</div></div></section>`}
   ${done.length ? `<section class="sec"><div class="sec-head"><span class="eyebrow">${esc(T("basket")(done.length))}</span>
       <div class="kv">${ui.finishing ? "" : `<button class="btn ghost small" data-act="clear-basket">${T("clearBasket")}</button><button class="btn small" data-act="finish">${T("finishShop")}</button>`}</div></div>
     ${ui.finishing ? `<form class="addbar" id="fFinish" style="margin-bottom:10px">
-      <input type="text" id="fStore" class="grow" placeholder="${esc(T("store"))}" autocomplete="off">
+      <input type="text" id="fStore" class="grow" list="storeList" value="${esc(f)}" placeholder="${esc(T("store"))}" autocomplete="off">
       <input type="text" id="fTotal" inputmode="decimal" placeholder="${esc(T("total"))}" style="flex:0 1 120px">
       <label class="file-pick"><span>${T("receipt")}</span><input type="file" id="fReceipt" accept="image/*,application/pdf" multiple></label>
       <button type="button" class="btn ghost" data-act="finish-cancel">${T("cancel")}</button><button class="btn">${T("saveTrip")}</button>
@@ -839,7 +861,17 @@ document.addEventListener("click", async ev => {
       save({ t: "chores", kind: "update", id, values: opts[(cur + 1) % opts.length] });
       return;
     }
-    case "often": addGrocery(b.dataset.name, "", b.dataset.cat); return;
+    case "often": addGrocery(b.dataset.name, "", b.dataset.cat, b.dataset.store || ""); return;
+    case "shop-filter": {
+      ui.shopFilter = b.dataset.v; try { localStorage.setItem("ht-shopFilter", ui.shopFilter); } catch (e) {}
+      ["gStore", "fStore"].forEach(i => { const el = document.getElementById(i); if (el) el.value = ui.shopFilter; }); // render() keeps typed values
+      render(); return;
+    }
+    case "groc-store": {
+      const g = find(S.groceries, id); if (!g) return;
+      const s = prompt(T("whichShop"), g.store || ""); if (s === null) return;
+      save({ t: "groceries", kind: "update", id, values: { store: s.trim() } }); return;
+    }
     case "clear-basket": save({ t: "groceries", kind: "clear", match: { done: true } }, "basketCleared"); return;
     case "clear-todos": save({ t: "chores", kind: "clear", match: { every: 0, done: true } }); return;
     case "export": exportData(); return;
@@ -870,8 +902,9 @@ document.addEventListener("submit", async ev => {
   if (f.id === "fSetup") return submitSetup();
   if (f.id === "fGroc") {
     const name = v("gName"), qty = v("gQty"); if (!name) return; ui.grocCat = v("gCat"); try { localStorage.setItem("ht-grocCat", ui.grocCat); } catch (e) {}
-    $("#gName").value = ""; $("#gQty").value = "";
-    addGrocery(name, qty, ui.grocCat); $("#gName")?.focus();
+    const store = v("gStore") || rememberedStore(name);
+    $("#gName").value = ""; $("#gQty").value = ""; $("#gStore").value = ui.shopFilter;
+    addGrocery(name, qty, ui.grocCat, store); $("#gName")?.focus();
   }
   if (f.id === "fChore") {
     const title = v("cTitle"); if (!title) return; const every = Number(v("cEvery")), dog = $("#cDog").checked, w = v("cWho");
@@ -914,8 +947,8 @@ document.addEventListener("change", ev => {
   }
   if (ev.target.id === "fileAdd" && ui.filesFor) { const { kind, id } = ui.filesFor; uploadFiles(kind, id, [...ev.target.files]); ev.target.value = ""; }
 });
-function addGrocery(name, qty, cat) {
-  save({ t: "groceries", kind: "insert", values: { id: uuid(), name, qty, cat }, notify: ["grocery", name] });
+function addGrocery(name, qty, cat, store = "") {
+  save({ t: "groceries", kind: "insert", values: { id: uuid(), name, qty, cat, store }, notify: ["grocery", store ? `${name} (${store})` : name] });
 }
 
 // rename the home
