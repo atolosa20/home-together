@@ -3,7 +3,7 @@
   --bg:#EEF2EE; --surface:#FFFFFF; --sunk:#E3E9E4; --ink:#17302B; --muted:#5E6F69; --line:#D3DCD6;
   --pine:#2E6B57; --pine-ink:#FFFFFF; --mustard:#E2A92B; --mustard-soft:#FBEFD2;
   --red:#C2483A; --red-soft:#F8E1DD; --ok:#2E6B57; --ok-soft:#DDEDE5;
-  --c-home:#2E6B57; --c-dogs:#B5651D; --c-people:#5B5FC7; --c-appt:#1F7A9C; --c-bills:#8C5A8C;
+  --c-home:#2E6B57; --c-dogs:#B5651D; --c-people:#5B5FC7; --c-appt:#1F7A9C; --c-bills:#8C5A8C; --c-travel:#C0577A;
   --display:"Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
   --body:"Nunito Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   --r:14px; --shadow:0 1px 2px rgba(23,48,43,.06), 0 4px 14px rgba(23,48,43,.06);
@@ -12,16 +12,16 @@
   --bg:#101917; --surface:#18241F; --sunk:#0C1412; --ink:#E6EEEA; --muted:#93A59E; --line:#2A3A34;
   --pine:#5DB394; --pine-ink:#08130F; --mustard:#E9B949; --mustard-soft:#3A3018;
   --red:#EC7B6C; --red-soft:#3D211D; --ok:#5DB394; --ok-soft:#173329;
-  --c-home:#5DB394; --c-dogs:#E19A55; --c-people:#9A9CF0; --c-appt:#5BB6D8; --c-bills:#C995C9;
+  --c-home:#5DB394; --c-dogs:#E19A55; --c-people:#9A9CF0; --c-appt:#5BB6D8; --c-bills:#C995C9; --c-travel:#EE8FB0;
   --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#101917; --surface:#18241F; --sunk:#0C1412; --ink:#E6EEEA; --muted:#93A59E; --line:#2A3A34;
   --pine:#5DB394; --pine-ink:#08130F; --mustard:#E9B949; --mustard-soft:#3A3018;
   --red:#EC7B6C; --red-soft:#3D211D; --ok:#5DB394; --ok-soft:#173329;
-  --c-home:#5DB394; --c-dogs:#E19A55; --c-people:#9A9CF0; --c-appt:#5BB6D8; --c-bills:#C995C9;
+  --c-home:#5DB394; --c-dogs:#E19A55; --c-people:#9A9CF0; --c-appt:#5BB6D8; --c-bills:#C995C9; --c-travel:#EE8FB0;
   --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45;
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:.9375rem;line-height:1.45;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
   padding-block:0 calc(84px + env(safe-area-inset-bottom,0px))}
 .wrap{max-width:760px;margin:0 auto}
@@ -179,3 +179,61 @@ img{max-width:100%}
 .code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:1.05rem;font-weight:700;letter-spacing:.12em;background:var(--sunk);padding:6px 10px;border-radius:8px;overflow-wrap:anywhere;user-select:all}
 .code.small{font-size:.75rem;letter-spacing:0}
 @media (min-width:700px){.sheet-bg{align-items:center}.sheet{border-radius:20px}}
+
+/* Follow the iPhone text size (Settings → Display & Brightness → Text Size). Everything is sized in rem. */
+@supports (font: -apple-system-body) { html { font: -apple-system-body; } }
+
+/* Shopping: sections, suggestions, finishing a shop, past shops */
+.seg + .addbar, .seg + .sec{margin-top:12px}
+.seg .count{font-size:.72rem;background:var(--mustard-soft);color:var(--ink);border-radius:999px;padding:0 6px;margin-left:2px}
+.often{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
+.often .eyebrow{width:100%}
+.chip-btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:5px 11px;font-size:.82rem;font-weight:600;cursor:pointer}
+.chip-btn:focus-visible,.who:focus-visible,.file-open:focus-visible{outline:2px solid var(--pine);outline-offset:2px}
+.file-pick{display:flex;flex-direction:column;gap:3px;font-size:.78rem;font-weight:600;color:var(--muted);flex:2 1 220px !important}
+.file-pick input{font-size:.82rem;max-width:100%}
+.trip details summary{cursor:pointer;list-style-position:inside}
+.trip-items{margin:6px 0 2px;padding-left:18px;font-size:.88rem;display:flex;flex-direction:column;gap:2px}
+
+/* Who does a chore */
+.who{all:unset;cursor:pointer;color:var(--pine);font-weight:700;border-radius:4px}
+.chip.mine{background:var(--mustard-soft);color:var(--ink)}
+
+/* Files on plans and shops */
+.icon.clip{position:relative}
+.icon.clip.has{color:var(--pine)}
+.icon.clip span{position:absolute;top:0;right:0;font-size:.6rem;font-weight:700;background:var(--pine);color:var(--pine-ink);border-radius:8px;padding:0 4px;line-height:1.4}
+.file-open{all:unset;cursor:pointer;font-weight:700;color:var(--pine);overflow-wrap:anywhere}
+.file-add{text-align:center;cursor:pointer}
+
+/* Dogs: quick walk/food, profiles with photos, medicines */
+.dog-quick{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.quick-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btn.big{padding:14px;font-size:1.05rem;border-radius:12px}
+.dogs:has(.dog-card){grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.dog-card{display:flex;flex-direction:column}
+.dog-card .dog{padding:14px 14px 8px}
+.dog .av.photo,.photo-pick .av.photo{object-fit:cover;padding:0;background:var(--sunk)}
+.dog-card .av{width:64px;height:64px;font-size:1.6rem}
+.dog-name{font-family:var(--display);font-weight:700;font-size:1.15rem}
+.dog-info{margin-top:6px;font-size:.84rem;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+.dog-info .lbl{color:var(--muted);font-weight:700}
+.dog-actions{display:flex;align-items:center;gap:2px}
+.dog-meds{border-top:1px solid var(--line);padding:8px 14px 12px;display:flex;flex-direction:column;gap:8px}
+.dog-meds .row{padding:9px 0;border-top:1px solid var(--line)}
+.dog-meds .list .row:first-child{border-top:0}
+.row.low .s{color:var(--red)}
+.log-ic{font-size:1.2rem;width:26px;text-align:center;flex:0 0 auto}
+.med-form{box-shadow:none;border:1px solid var(--line)}
+label.inline{display:flex;align-items:center;gap:6px;font-size:.8rem;font-weight:700;color:var(--muted)}
+label.inline input{width:auto}
+.dog-form{padding:14px;display:flex;flex-direction:column;gap:10px}
+.dog-form label{font-size:.8rem;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.dog-form input,.dog-form select{width:100%}
+.dog-form .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.photo-pick{display:flex;align-items:center;gap:12px}
+.photo-pick .av{width:72px;height:72px;border-radius:50%;background:var(--mustard-soft);color:var(--c-dogs);display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:1.8rem}
+#scLink{font-size:.8rem}
+.steps{margin:8px 0 0;padding-left:20px;font-size:.85rem;display:flex;flex-direction:column;gap:6px}
+input[type=number]{background:var(--sunk);border:1px solid transparent;border-radius:10px;padding:9px 11px;min-width:0}
+@media (max-width:420px){.dogs:has(.dog-card){grid-template-columns:1fr}.dog-form .two{grid-template-columns:1fr}}
