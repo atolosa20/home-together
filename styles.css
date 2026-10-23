@@ -43,7 +43,7 @@ header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:1
 .banner{background:var(--mustard-soft);border:1px solid var(--mustard);border-radius:var(--r);padding:10px 14px;font-size:.9rem;margin-bottom:12px}
 
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
-  display:grid;grid-template-columns:repeat(5,1fr);
+  display:grid;grid-template-columns:repeat(6,1fr);
   padding:6px max(8px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px))}
 nav.tabs a{position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;border-radius:10px;color:var(--muted);text-decoration:none;font-size:.7rem;font-weight:700;letter-spacing:.02em;text-align:center}
 nav.tabs a svg{width:22px;height:22px}
@@ -244,3 +244,22 @@ input[type=number]{background:var(--sunk);border:1px solid transparent;border-ra
 .chip-btn[aria-pressed="true"]{background:var(--pine);color:var(--pine-ink);border-color:var(--pine)}
 .chip-btn small{color:var(--muted);font-weight:600;margin-left:2px}
 .who.faint{color:var(--muted);font-weight:600}
+
+/* Spending */
+.month-card{padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.money-total{font-family:var(--display);font-weight:700;font-size:2rem;text-align:center;letter-spacing:-.01em}
+.money-sub{margin:0;text-align:center}
+.amt{font-variant-numeric:tabular-nums;white-space:nowrap}
+.cat-row{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;width:100%}
+.list > .cat-row:first-child{border-top:0}
+.cat-row:focus-visible{outline:2px solid var(--pine);outline-offset:-2px}
+.bar{height:6px;border-radius:3px;background:var(--sunk);margin:5px 0 3px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--pine)}
+.bar.plain i{background:var(--muted)}
+.bar.near i{background:var(--mustard)}
+.bar.over i{background:var(--red)}
+.more-cats{margin-top:8px}
+.more-cats summary{cursor:pointer}
+.spend-line{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;margin-top:12px;text-decoration:none;color:inherit}
+.spend-line b{font-family:var(--display);font-size:1.15rem;font-variant-numeric:tabular-nums}
+nav.tabs a span:not(.badge){font-size:.68rem}

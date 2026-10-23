@@ -80,10 +80,10 @@ const configured = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR-PROJECT"
 const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
 // ---------- state ----------
-const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], home: null };
+const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], home: null };
 let me = null, hid = null, channel = null, online = true;
 let tab = "today", calMonth = today().slice(0, 7), calSel = today(), pendingDelete = null;
-const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, authMode: "signin", setupMode: "create" };
+const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create" };
 try {
   const g = localStorage.getItem("ht-grocCat"); if (GROC_KEYS.includes(g)) ui.grocCat = g;
   const s = localStorage.getItem("ht-shopView"); if (SHOP_VIEWS.includes(s)) ui.shopView = s;
@@ -120,10 +120,12 @@ const DEFAULTS = {
   chores: { every: 0, dog: false, done: false, last_done: null, last_by: null, assigned_to: null, rotate: false },
   events: { time: "", cat: "home", repeat: "", remind: "" },
   dogs: { breed: "", notes: "", birthday: null },
-  needs: { cat: "other", price: "", link: "", notes: "", done: false, done_by: null },
+  needs: { cat: "other", price: "", store: "", link: "", notes: "", done: false, done_by: null },
   shopping_trips: { store: "", total: "", items: [] },
   dog_log: { dog_id: null, detail: "" },
-  dog_meds: { dose: "", every: 0, last_given: null, last_by: null, at_time: "09:00", stock: null }
+  dog_meds: { dose: "", every: 0, last_given: null, last_by: null, at_time: "09:00", stock: null },
+  expenses: { cat: "other", note: "", store: "", private: false, trip_id: null, need_id: null, fixed_id: null },
+  fixed_costs: { cat: "bills", private: false, active: true }
 };
 function applyOp(op) {
   const list = S[op.t];
@@ -187,6 +189,10 @@ const TABLES = {
   attachments: () => sb.from("attachments").select("*").order("created_at"),
   dog_log: () => sb.from("dog_log").select("*").order("at", { ascending: false }).limit(100),
   dog_meds: () => sb.from("dog_meds").select("*").order("created_at"),
+  // Spending: this year and last (enough for the months shown and the yearly export).
+  expenses: () => sb.from("expenses").select("*").gte("spent_on", (new Date().getFullYear() - 1) + "-01-01").order("spent_on", { ascending: false }),
+  fixed_costs: () => sb.from("fixed_costs").select("*").order("day"),
+  budgets: () => sb.from("budgets").select("cat, amount"),
   history: () => sb.from("grocery_history").select("name_key, name, cat, store, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
 };
 async function load(name) {
@@ -208,7 +214,7 @@ const reloadSoon = {};
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("home-" + hid);
-  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds"].forEach(t => {
+  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets"].forEach(t => {
     channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `household_id=eq.${hid}` }, () => {
       clearTimeout(reloadSoon[t]); reloadSoon[t] = setTimeout(() => load(t), 150);
     });
@@ -290,6 +296,7 @@ function viewToday() {
     <a class="card stat" href="#groceries"><b>${groc}</b><span>${T("toBuy")}</span></a>
     <a class="card stat" href="#calendar"><b>${week}</b><span>${T("thisWeek")}</span></a>
   </div>
+  <a class="card spend-line" href="#money"><span>${T("spentMonth")}</span><b>${esc(money(sumOf(monthExp(today().slice(0, 7)))))}</b></a>
   ${S.dogs.length ? `<section class="sec">${dogButtons()}</section>` : ""}
   <section class="sec"><div class="sec-head"><h2>${T("dueNow")}</h2><a class="link" href="#chores">${T("allChores")}</a></div>
     <div class="card list">${d.length || meds.length ? d.map(c => routineRow(c, true)).join("") + meds.map(m => medRow(m, true)).join("")
@@ -363,15 +370,17 @@ function viewNeeds() {
   const groups = NEED_KEYS.map(k => [k, open.filter(x => (NEED_KEYS.includes(x.cat) ? x.cat : "other") === k)]).filter(g => g[1].length);
   const row = x => `<div class="row ${x.done ? "done" : ""}">
       <button class="check ${x.done ? "on" : ""}" data-act="need" data-id="${esc(x.id)}" aria-label="${x.done ? T("putBack") : T("markBought")}">${x.done ? IC.tick : ""}</button>
-      <div class="main"><div class="t">${esc(x.title)}${x.price ? ` <span class="chip">${esc(x.price)}</span>` : ""}</div>
+      <div class="main"><div class="t">${esc(x.title)}${x.price ? ` <span class="chip">${esc(x.price)}</span>` : ""}${x.store ? ` <span class="chip">${esc(x.store)}</span>` : ""}</div>
         <div class="s">${[x.notes ? esc(x.notes) : "", x.link ? `<a class="link" href="${esc(safeLink(x.link))}" target="_blank" rel="noopener noreferrer">${T("openLink")} ${IC.link}</a>` : "",
           x.done && x.done_by ? esc(T("doneBy")(who(x.done_by))) : x.created_by ? esc(T("addedBy")(who(x.created_by))) : ""].filter(Boolean).join(" · ")}</div></div>
       ${delBtn("needs", x.id)}</div>`;
   return `
+  ${shopDatalist()}
   <form class="addbar" id="fNeed">
     <input type="text" id="nTitle" class="grow" placeholder="${esc(T("nPlaceholder"))}" autocomplete="off" required>
     <select id="nCat">${NEED_KEYS.map(k => `<option value="${k}" ${k === ui.needCat ? "selected" : ""}>${esc(T("needCats")[k])}</option>`).join("")}</select>
     <input type="text" id="nPrice" placeholder="${esc(T("price"))}" style="flex:0 1 90px">
+    <input type="text" id="nStore" list="shopList" placeholder="${esc(T("shopOrWeb"))}" autocomplete="off">
     <input type="url" id="nLink" placeholder="${esc(T("link"))}" autocomplete="off">
     <input type="text" id="nNotes" class="grow" placeholder="${esc(T("nNotes"))}">
     <button class="btn">${T("add")}</button>
@@ -382,7 +391,8 @@ function viewNeeds() {
     <div class="card list">${done.map(row).join("")}</div></section>` : ""}`;
 }
 
-const filesOf = (kind, id) => S.attachments.filter(a => (kind === "event" ? a.event_id : a.trip_id) === id);
+const FILE_COL = { event: "event_id", trip: "trip_id", expense: "expense_id" };
+const filesOf = (kind, id) => S.attachments.filter(a => a[FILE_COL[kind]] === id);
 function clipBtn(kind, id, title) {
   const n = filesOf(kind, id).length;
   return `<button class="icon clip ${n ? "has" : ""}" data-act="files" data-kind="${kind}" data-id="${esc(id)}" data-title="${esc(title)}" aria-label="${esc(T("files"))}${n ? ` (${n})` : ""}">${IC.clip}${n ? `<span>${n}</span>` : ""}</button>`;
@@ -604,7 +614,169 @@ async function loadPhotos() {
   render();
 }
 
-const VIEWS = { today: viewToday, groceries: viewShopping, chores: viewChores, calendar: viewCalendar, dogs: viewDogs };
+// ---------- spending ----------
+const EXP_KEYS = ["groceries", "home", "bills", "dogs", "eating_out", "transport", "leisure", "health", "clothes", "gifts", "other"];
+const EXP_COLORS = { groceries: "--c-home", home: "--c-appt", bills: "--c-bills", dogs: "--c-dogs", eating_out: "--mustard", transport: "--c-people",
+  leisure: "--c-travel", health: "--red", clothes: "--c-people", gifts: "--c-travel", other: "--muted" };
+const NEED_TO_EXP = { furniture: "home", tech: "home", home: "home", books: "leisure", clothes: "clothes", gifts: "gifts", other: "other" };
+// Shops and websites offered when typing; anything else typed is remembered from then on.
+const OTHER_SHOPS = ["Amazon", "AliExpress", "IKEA", "Decathlon", "MediaMarkt", "El Corte Inglés", "Zara", "Primark", "Leroy Merlin", "Fnac", "PcComponentes", "Shein", "Temu"];
+const allShops = () => {
+  const all = [...OTHER_SHOPS, ...STORES, ...S.expenses.map(e => e.store), ...S.needs.map(n => n.store), ...S.groceries.map(g => g.store), ...S.history.map(h => h.store)]
+    .map(x => (x || "").trim()).filter(Boolean);
+  return all.filter((x, i) => all.findIndex(y => sameStore(x, y)) === i).sort((a, b) => a.localeCompare(b));
+};
+const shopDatalist = () => `<datalist id="shopList">${allShops().map(x => `<option value="${esc(x)}">`).join("")}</datalist>`;
+
+const money = n => new Intl.NumberFormat(lang === "es" ? "es-ES" : "en-IE", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
+// "54,30", "54.30", "1.234,50", "12 €", "~300€" → number, or null.
+function parseAmount(s) {
+  let t = String(s || "").replace(/[€\s~≈]/g, "");
+  if (!t) return null;
+  if (t.includes(",") && t.includes(".")) t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
+  else t = t.replace(",", ".");
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+}
+const sumOf = list => Math.round(list.reduce((t, e) => t + Number(e.amount || 0), 0) * 100) / 100;
+const shiftMonth = (m, n) => { const [y, mo] = m.split("-").map(Number); return ymd(new Date(y, mo - 1 + n, 1)).slice(0, 7); };
+const monthLabel = m => { const [y, mo] = m.split("-").map(Number); return `${cap(T("months")[mo - 1])} ${y}`; };
+const monthExp = m => S.expenses.filter(e => e.spent_on.slice(0, 7) === m);
+const expCat = k => EXP_KEYS.includes(k) ? k : "other";
+const budgetOf = k => Number(S.budgets.find(b => b.cat === k)?.amount || 0);
+const dayIn = (m, day) => { const [y, mo] = m.split("-").map(Number); return `${m}-${pad(Math.min(day, new Date(y, mo, 0).getDate()))}`; };
+const payerOptions = sel => S.members.map(p => `<option value="${esc(p.user_id)}" ${p.user_id === sel ? "selected" : ""}>${esc(p.user_id === me ? T("you_") : p.display_name || T("partner"))}</option>`).join("");
+const catOptions = sel => EXP_KEYS.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(T("expCats")[k])}</option>`).join("");
+const onlyMeChip = x => x.private ? ` <span class="chip">${T("onlyMe")}</span>` : "";
+
+function expRow(e) {
+  const k = expCat(e.cat), title = e.note || e.store || T("expCats")[k];
+  const sub = [fmtDay(e.spent_on), T("expCats")[k], e.note && e.store ? e.store : "", e.paid_by ? T("paidBy")(who(e.paid_by)) : "", e.fixed_id ? T("fixedTag") : ""]
+    .filter(Boolean).map(esc).join(" · ");
+  return `<div class="row"><span class="dot" style="background:var(${EXP_COLORS[k]})"></span>
+    <div class="main"><div class="t">${esc(title)}${onlyMeChip(e)}</div><div class="s">${sub}</div></div>
+    <b class="amt">${esc(money(e.amount))}</b>${clipBtn("expense", e.id, title)}${delBtn("expenses", e.id)}</div>`;
+}
+function fixedRow(c) {
+  const sub = [T("dayN")(c.day), T("expCats")[expCat(c.cat)], c.paid_by ? T("paidBy")(who(c.paid_by)) : ""].filter(Boolean).map(esc).join(" · ");
+  return `<div class="row"><span class="dot" style="background:var(${EXP_COLORS[expCat(c.cat)]})"></span>
+    <div class="main"><div class="t">${esc(c.name)}${onlyMeChip(c)}</div><div class="s">${sub}</div></div>
+    <b class="amt">${esc(money(c.amount))}</b>${delBtn("fixed_costs", c.id)}</div>`;
+}
+function viewMoney() {
+  const m = ui.moneyMonth, list = monthExp(m).sort((a, b) => b.spent_on.localeCompare(a.spent_on) || (b.created_at || "").localeCompare(a.created_at || ""));
+  const total = sumOf(list), prev = sumOf(monthExp(shiftMonth(m, -1)));
+  const diff = prev ? Math.round((total - prev) / prev * 100) : null;
+  const byPerson = S.members.map(p => [p, sumOf(list.filter(e => e.paid_by === p.user_id))]).filter(x => x[1]);
+  const byCat = EXP_KEYS.map(k => [k, sumOf(list.filter(e => expCat(e.cat) === k)), budgetOf(k)]).filter(([, s, b]) => s || b);
+  const maxCat = Math.max(1, ...byCat.map(x => x[1]));
+  // By shop: same shop however it was typed ("amazon" = "Amazon").
+  const shops = [];
+  for (const e of list) {
+    if (!e.store) continue;
+    const row = shops.find(x => sameStore(x[0], e.store));
+    if (row) row[1] += Number(e.amount); else shops.push([e.store.trim(), Number(e.amount)]);
+  }
+  shops.sort((a, b) => b[1] - a[1]);
+  const catRow = ([k, s, b]) => {
+    const pct = b ? s / b : s / maxCat, lvl = b ? (pct >= 1 ? "over" : pct >= 0.8 ? "near" : "ok") : "plain";
+    return `<button type="button" class="row cat-row" data-act="budget" data-k="${k}" aria-label="${esc(T("budgetFor")(T("expCats")[k]))}">
+      <span class="dot" style="background:var(${EXP_COLORS[k]})"></span>
+      <div class="main"><div class="t">${esc(T("expCats")[k])}</div><div class="bar ${lvl}"><i style="width:${Math.min(100, Math.round(pct * 100))}%"></i></div>
+        <div class="s">${b ? esc(T("ofBudget")(money(s), money(b))) : T("noBudget")}</div></div>
+      <b class="amt">${esc(money(s))}</b></button>`;
+  };
+  const curMonth = today().slice(0, 7), fixed = S.fixed_costs.slice().sort((a, b) => a.day - b.day);
+  const unbudgeted = EXP_KEYS.filter(k => !byCat.some(x => x[0] === k));
+  return `
+  <div class="card month-card">
+    <div class="cal-head"><button class="icon" data-act="mmon" data-n="-1" aria-label="${T("prevMonth")}">${IC.prev}</button>
+      <b>${esc(monthLabel(m))}</b><button class="icon" data-act="mmon" data-n="1" aria-label="${T("nextMonth")}">${IC.next}</button></div>
+    <div class="money-total">${esc(money(total))}</div>
+    <div class="hint money-sub">${[diff === null ? "" : T("vsLast")(diff), ...byPerson.map(([p, s]) => `${p.user_id === me ? T("you_") : p.display_name} ${money(s)}`)].filter(Boolean).map(esc).join(" · ")}</div>
+  </div>
+  ${shopDatalist()}
+  <form class="addbar" id="fExp" style="margin-top:12px">
+    <input type="text" id="xAmount" inputmode="decimal" placeholder="${esc(T("amount"))}" required autocomplete="off" style="flex:1 1 90px">
+    <select id="xCat" aria-label="${esc(T("category"))}">${catOptions(ui.expCat)}</select>
+    <input type="text" id="xStore" list="shopList" placeholder="${esc(T("shopOrWeb"))}" autocomplete="off" style="flex:1 1 140px">
+    <input type="date" id="xDate" value="${m === curMonth ? today() : m + "-01"}" required>
+    <select id="xPaid" aria-label="${esc(T("paidByLbl"))}">${payerOptions(me)}</select>
+    <input type="text" id="xNote" class="grow" placeholder="${esc(T("expNote"))}" autocomplete="off">
+    <label class="toggle"><input type="checkbox" id="xPrivate"> ${T("onlyMe")}</label>
+    <button class="btn">${T("add")}</button>
+  </form>
+  <section class="sec"><div class="sec-head"><h2>${T("byCategory")}</h2><span class="eyebrow">${T("tapBudget")}</span></div>
+    <div class="card list">${byCat.length ? byCat.map(catRow).join("") : `<div class="empty">${T("noSpending")}</div>`}</div>
+    ${unbudgeted.length ? `<details class="more-cats"><summary class="link">${T("setBudget")}</summary><div class="often">${unbudgeted.map(k => `<button class="chip-btn" data-act="budget" data-k="${k}">${esc(T("expCats")[k])}</button>`).join("")}</div></details>` : ""}</section>
+  ${shops.length ? `<section class="sec"><h2>${T("byShop")}</h2><div class="card list">${shops.slice(0, 8).map(([name, s]) => `<div class="row"><div class="main"><div class="t">${esc(name)}</div></div><b class="amt">${esc(money(s))}</b></div>`).join("")}</div></section>` : ""}
+  <section class="sec"><h2>${T("expensesH")}</h2>
+    <div class="card list">${list.length ? list.map(expRow).join("") : `<div class="empty">${T("noSpending")}</div>`}</div></section>
+  <section class="sec"><div class="sec-head"><h2>${T("fixedH")}</h2><span class="eyebrow">${T("fixedHint")}</span></div>
+    <div class="card list">${fixed.length ? fixed.map(fixedRow).join("") : `<div class="empty">${T("noFixed")}</div>`}</div>
+    <form class="addbar" id="fFixed" style="margin-top:10px">
+      <input type="text" id="fxName" class="grow" placeholder="${esc(T("fixedName"))}" required autocomplete="off">
+      <input type="text" id="fxAmount" inputmode="decimal" placeholder="${esc(T("amount"))}" required style="flex:1 1 90px">
+      <label class="inline"><span>${T("onDay")}</span><input type="number" id="fxDay" min="1" max="31" value="${Number(today().slice(8))}" required style="width:64px"></label>
+      <select id="fxCat" aria-label="${esc(T("category"))}">${catOptions("bills")}</select>
+      <select id="fxPaid" aria-label="${esc(T("paidByLbl"))}">${payerOptions(me)}</select>
+      <label class="toggle"><input type="checkbox" id="fxPrivate"> ${T("onlyMe")}</label>
+      <label class="toggle"><input type="checkbox" id="fxNow" checked> ${T("alsoThisMonth")}</label>
+      <button class="btn">${T("add")}</button>
+    </form></section>
+  <section class="sec"><div class="kv"><span class="eyebrow">${T("exportCsv")}</span>
+    <div class="kv"><button class="btn ghost small" data-act="csv" data-scope="month">${esc(monthLabel(m))}</button><button class="btn ghost small" data-act="csv" data-scope="year">${m.slice(0, 4)}</button></div></div></section>`;
+}
+
+function addExpense(values, okKey = "added") {
+  const v = { id: uuid(), store: "", note: "", private: false, paid_by: me, spent_on: today(), ...values };
+  return save({ t: "expenses", kind: "insert", values: v }, okKey).then(ok => { budgetToast(v.cat, v.spent_on); return ok; });
+}
+// Local heads-up when a budget is nearly used up (the server also notifies both phones).
+function budgetToast(cat, day) {
+  const b = budgetOf(cat); if (!b) return;
+  const s = sumOf(monthExp(day.slice(0, 7)).filter(e => expCat(e.cat) === cat && !e.private));
+  if (s >= b) toast(T("budgetOverToast")(T("expCats")[cat])); else if (s >= b * 0.8) toast(T("budgetNearToast")(T("expCats")[cat]));
+}
+// A Need ticked as bought goes into Spending with its name, category, shop and price.
+// Without a usable price it asks for one (empty = don't add).
+function needBought(x) {
+  let amount = parseAmount(x.price);
+  if (amount === null) {
+    const ans = prompt(T("needCost")(x.title), x.price || "");
+    if (ans === null || !ans.trim()) return;
+    amount = parseAmount(ans);
+    if (amount === null) { toast("badAmount"); return; }
+  }
+  addExpense({ amount, cat: NEED_TO_EXP[x.cat] || "other", note: x.title, store: x.store || "", need_id: x.id }, "expAdded");
+}
+async function setBudget(k) {
+  const cur = budgetOf(k), name = T("expCats")[k];
+  const ans = prompt(T("budgetPrompt")(name), cur ? String(cur).replace(".", lang === "es" ? "," : ".") : ""); if (ans === null) return;
+  if (!navigator.onLine) { toast("needsOnline"); return; }
+  const n = parseAmount(ans);
+  if (ans.trim() && n === null) { toast("badAmount"); return; }
+  const res = !ans.trim() || n === 0 ? await sb.from("budgets").delete().eq("household_id", hid).eq("cat", k)
+    : await sb.from("budgets").upsert({ household_id: hid, cat: k, amount: n }, { onConflict: "household_id,cat" });
+  if (res.error) { console.error(res.error); toast("cantSave"); return; }
+  toast("savedOk"); load("budgets");
+}
+function exportCsv(scope) {
+  const m = ui.moneyMonth, es = lang === "es", sep = es ? ";" : ",";
+  const rows = S.expenses.filter(e => scope === "year" ? e.spent_on.startsWith(m.slice(0, 4)) : e.spent_on.slice(0, 7) === m)
+    .sort((a, b) => a.spent_on.localeCompare(b.spent_on));
+  const q = v => { const s = String(v ?? ""); return /["\n;,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const num = n => es ? Number(n).toFixed(2).replace(".", ",") : Number(n).toFixed(2);
+  const lines = [T("csvHead").map(q).join(sep), ...rows.map(e => [e.spent_on, T("expCats")[expCat(e.cat)], num(e.amount), e.paid_by ? who(e.paid_by) : "",
+    e.note, e.store, e.fixed_id ? T("fixedTag") : "", e.private ? T("onlyMe") : ""].map(q).join(sep))];
+  const name = `home-together-${scope === "year" ? m.slice(0, 4) : m}.csv`;
+  const file = new File(["﻿" + lines.join("\r\n")], name, { type: "text/csv" }); // the BOM lets Excel read accents
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: name }).catch(() => {}); return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+const VIEWS = { today: viewToday, groceries: viewShopping, money: viewMoney, chores: viewChores, calendar: viewCalendar, dogs: viewDogs };
 
 // ---------- settings sheet ----------
 async function pushState() {
@@ -671,7 +843,7 @@ async function uploadFiles(kind, parentId, files) {
     toast("uploading");
     const up = await sb.storage.from("files").upload(path, f, { contentType: mime });
     if (up.error) { console.error(up.error); toast("cantUpload"); continue; }
-    const { error } = await sb.from("attachments").insert({ [kind === "event" ? "event_id" : "trip_id"]: parentId, path, name: f.name, mime, size: f.size });
+    const { error } = await sb.from("attachments").insert({ [FILE_COL[kind]]: parentId, path, name: f.name, mime, size: f.size });
     if (error) { console.error(error); sb.storage.from("files").remove([path]); toast("cantUpload"); continue; }
     ok++;
   }
@@ -718,12 +890,14 @@ async function finishShopping() {
   const sent = await save({ t: "shopping_trips", kind: "insert", values,
     notify: ["shop", `${T("items")(bought.length)}${values.store ? " · " + values.store : ""}`] }, "tripSaved");
   save({ t: "groceries", kind: "clear", match: { done: true } });
+  const amount = parseAmount(values.total);
+  if (amount) addExpense({ amount, cat: "groceries", store: values.store, note: T("items")(bought.length), trip_id: id });
   if (files.length) sent ? uploadFiles("trip", id, files) : toast("receiptLater");
 }
 
 // A copy of everything in this home, as a JSON file (the database rules limit it to this home).
 async function exportData() {
-  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "grocery_history"];
+  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "expenses", "fixed_costs", "budgets", "grocery_history"];
   const out = { app: "Home Together", version: running?.version || "dev", exported_at: new Date().toISOString() };
   for (const t of tables) {
     const { data, error } = await sb.from(t).select("*");
@@ -819,14 +993,16 @@ document.addEventListener("click", async ev => {
     case "del": pendingDelete = b.dataset.k; render(); return;
     case "del-yes": {
       const [t, i] = b.dataset.k.split("/"); pendingDelete = null;
-      if (t === "events" || t === "shopping_trips") removeFilesOf(t === "events" ? "event" : "trip", i);
+      const fk = { events: "event", shopping_trips: "trip", expenses: "expense" }[t]; if (fk) removeFilesOf(fk, i);
       if (t === "dogs") { const p = find(S.dogs, i)?.photo; if (p) sb.storage.from("files").remove([p]); }
       save({ t, kind: "delete", id: i }, "deleted"); return;
     }
     case "shop-view": ui.shopView = b.dataset.v; ui.finishing = false; try { localStorage.setItem("ht-shopView", ui.shopView); } catch (e) {} render(); return;
     case "need": {
       const x = find(S.needs, id); if (!x) return; const done = !x.done;
-      save({ t: "needs", kind: "update", id, values: { done, done_by: done ? me : null } }); return;
+      save({ t: "needs", kind: "update", id, values: { done, done_by: done ? me : null } });
+      if (done && !S.expenses.some(e => e.need_id === x.id)) needBought(x);
+      return;
     }
     case "clear-needs": save({ t: "needs", kind: "clear", match: { done: true } }); return;
     case "finish": ui.finishing = true; render(); $("#fStore")?.focus(); return;
@@ -875,6 +1051,13 @@ document.addEventListener("click", async ev => {
     case "clear-basket": save({ t: "groceries", kind: "clear", match: { done: true } }, "basketCleared"); return;
     case "clear-todos": save({ t: "chores", kind: "clear", match: { every: 0, done: true } }); return;
     case "export": exportData(); return;
+    case "mmon": {
+      ui.moneyMonth = shiftMonth(ui.moneyMonth, Number(b.dataset.n));
+      const xd = $("#xDate"); if (xd) xd.value = ui.moneyMonth === today().slice(0, 7) ? today() : ui.moneyMonth + "-01"; // render() keeps typed values
+      render(); return;
+    }
+    case "budget": setBudget(b.dataset.k); return;
+    case "csv": exportCsv(b.dataset.scope); return;
     case "sc-new": newShortcutToken(); return;
     case "sc-copy": {
       try { await navigator.clipboard.writeText($("#scLink").value); toast("copied"); } catch (e) { $("#scLink").select(); }
@@ -922,10 +1105,28 @@ document.addEventListener("submit", async ev => {
       notify: ["event", `${title} · ${fmtDay(date)}${time ? " " + time : ""}`] }, "addedCal");
   }
   if (f.id === "fFinish") finishShopping();
+  if (f.id === "fExp") {
+    const amount = parseAmount(v("xAmount")); if (amount === null) { toast("badAmount"); $("#xAmount").focus(); return; }
+    ui.expCat = v("xCat");
+    const values = { amount, cat: ui.expCat, store: v("xStore"), spent_on: v("xDate") || today(), paid_by: v("xPaid") || me, note: v("xNote"), private: $("#xPrivate").checked };
+    ["xAmount", "xStore", "xNote"].forEach(i => $("#" + i).value = ""); $("#xPrivate").checked = false;
+    addExpense(values);
+  }
+  if (f.id === "fFixed") {
+    const amount = parseAmount(v("fxAmount")), day = Math.min(31, Math.max(1, parseInt(v("fxDay"), 10) || 1)), name = v("fxName");
+    if (!name) return; if (amount === null) { toast("badAmount"); return; }
+    const month = today().slice(0, 7), now = $("#fxNow").checked, id = uuid();
+    const c = { id, name, amount, day, cat: v("fxCat"), paid_by: v("fxPaid") || me, private: $("#fxPrivate").checked,
+      start_month: (now ? month : shiftMonth(month, 1)) + "-01", last_month: now ? month + "-01" : null };
+    ["fxName", "fxAmount"].forEach(i => $("#" + i).value = "");
+    save({ t: "fixed_costs", kind: "insert", values: c }, "fixedAdded").then(ok => {
+      if (now) addExpense({ amount, cat: c.cat, spent_on: dayIn(month, day), paid_by: c.paid_by, note: name, private: c.private, fixed_id: id }, null);
+    });
+  }
   if (f.id === "fNeed") {
     const title = v("nTitle"); if (!title) return; ui.needCat = v("nCat");
-    const values = { id: uuid(), title, cat: ui.needCat, price: v("nPrice"), link: v("nLink"), notes: v("nNotes") };
-    ["nTitle", "nPrice", "nLink", "nNotes"].forEach(i => $("#" + i).value = "");
+    const values = { id: uuid(), title, cat: ui.needCat, price: v("nPrice"), store: v("nStore"), link: v("nLink"), notes: v("nNotes") };
+    ["nTitle", "nPrice", "nStore", "nLink", "nNotes"].forEach(i => $("#" + i).value = "");
     save({ t: "needs", kind: "insert", values, notify: ["need", title] }, "added");
   }
   if (f.id === "fDogEdit") saveDog();
