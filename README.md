@@ -139,6 +139,8 @@ The app online only changes when you **publish a GitHub release**. Pushing or me
    the new version and shows **What's new · v1.1.0** once.
 
 The version number and the first lines of the release notes are what the phones see, so keep the notes short.
+Each release needs at least one new merged change since the previous one: GitHub Pages skips a deploy for a commit
+it has already published, so two releases on the same commit leave the older version online.
 The current version is shown at the bottom of **⚙ Settings**.
 
 - **Change a function:** after editing a file in `supabase/functions`, run the matching `npx supabase functions deploy ...` command again.
