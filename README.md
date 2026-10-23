@@ -26,6 +26,8 @@ Setup takes about 30–45 minutes, once. You need: a Supabase account, a GitHub 
 1. In the project, open **SQL Editor → New query**.
 2. Open `supabase/schema.sql` from this folder, copy everything, paste it in and click **Run**.
    You should see "Success. No rows returned".
+3. Later changes to the database are in `supabase/migrations/` (the first file there is the same as `schema.sql`).
+   After step 5, run `npx supabase db push` to apply the newer ones.
 
 ## 3. Make the notification keys
 
@@ -64,9 +66,14 @@ npx supabase login
 npx supabase init            # answer "N" to the questions about VS Code / IntelliJ
 npx supabase link --project-ref YOUR-PROJECT-REF
 npx supabase secrets set VAPID_PUBLIC_KEY="..." VAPID_PRIVATE_KEY="..." VAPID_SUBJECT="mailto:alextolosa1999@gmail.com" CRON_SECRET="..."
-npx supabase functions deploy notify
+npx supabase functions deploy notify --no-verify-jwt
 npx supabase functions deploy daily --no-verify-jwt
+npx supabase functions deploy remind --no-verify-jwt
+npx supabase functions deploy walk --no-verify-jwt
 ```
+
+Each function checks who is calling itself: `notify` the signed-in user, `daily` and `remind` the cron secret,
+and `walk` the personal Shortcut link.
 
 `YOUR-PROJECT-REF` is the part of your Project URL before `.supabase.co`.
 
@@ -79,6 +86,9 @@ npx supabase functions deploy daily --no-verify-jwt
 
 The reminder goes out at 08:30 in summer and 07:30 in winter, and only on days when something is due or planned.
 
+Do the same with `supabase/reminders.sql`. It checks every 15 minutes for reminders before calendar plans
+and for dog medicines that are due.
+
 ## 7. Put the app online (GitHub Pages)
 
 1. On GitHub, create a new **public** repository called `home-together`.
@@ -88,8 +98,8 @@ The reminder goes out at 08:30 in summer and 07:30 in winter, and only on days w
    ```powershell
    git config --global user.email "alextolosa1999@gmail.com"
    ```
-3. In the repository open **Settings → Pages**, set **Source: Deploy from a branch**, **Branch: main / (root)**,
-   and save. After a minute the app is live at `https://YOUR-GITHUB-USERNAME.github.io/home-together/`.
+3. In the repository open **Settings → Pages** and set **Source: GitHub Actions**. Then publish a release (see
+   [Updating the app](#updating-the-app)); after a minute the app is live at `https://YOUR-GITHUB-USERNAME.github.io/home-together/`.
 4. Back in Supabase, open **Authentication → URL Configuration**:
    - Set **Site URL** to that address.
    - Add it under **Redirect URLs** too.
@@ -121,7 +131,22 @@ Notifications need iOS 16.4 or newer, with the app opened from the home-screen i
   - You don't get notified about your own changes.
   - Each person receives notifications in the language they chose in the app.
 - **Privacy:** database rules make sure each person only ever sees their own home's data.
-  The anon key in `config.js` can't get around that.
+  The anon key in `config.js` can't get around that. Files (receipts, tickets, dog photos) are in a private
+  storage bucket with the same rule, and open through links that expire.
+- **No connection:** changes are kept on the phone and sent when the connection is back; the header shows how many are waiting.
+- **Shopping:** three parts. **List** for groceries, with your most-bought items as one-tap suggestions.
+  **Needs** for bigger things (furniture, a TV, books) by category. **Past shops**: *Finish shopping* keeps what was
+  in the basket together, with the store, total and receipt photos or PDFs.
+- **Calendar:** plans can repeat (weekly, monthly, yearly), remind you the evening before or an hour before, and carry
+  files such as plane tickets, boarding passes (also Wallet passes) and bookings. Use the **Travel** category for trips.
+- **Chores:** each one can be for anyone, for one person, or take turns; Today shows whose turn it is.
+- **Dogs:** a profile per dog (photo, age, breed, weight, food, vet, chip, health). One tap logs a walk or a meal and
+  tells your partner. Each dog has its own medicines with dose, how often and a reminder time; both phones get a
+  reminder when one is due, and **Given** tells your partner which dog got what.
+- **Walks from an iPhone Shortcut:** Settings has a personal link for the Shortcuts app, for example to log a walk when
+  you leave home. iPhone doesn't let apps see AirTags, so this is the closest thing to automatic.
+- **Text size:** the app follows the iPhone text size setting.
+- **Your data:** Settings → *Download a copy* saves everything in the home as a file.
 
 ## Updating the app
 
@@ -155,4 +180,9 @@ The current version is shown at the bottom of **⚙ Settings**.
 | `supabase/schema.sql` | Database tables and security rules (run once) |
 | `supabase/functions/notify` | Sends "your partner added…" notifications |
 | `supabase/functions/daily` | Sends the morning reminder |
+| `supabase/functions/remind` | Reminders before plans, and dog medicines when due |
+| `supabase/functions/walk` | Logs a dog walk from an iPhone Shortcut |
+| `supabase/migrations/` | Database changes, applied with `npx supabase db push` |
 | `supabase/daily-reminder.sql` | Schedules the morning reminder |
+| `supabase/reminders.sql` | Schedules the 15-minute reminder check |
+| `version.json`, `.github/workflows/` | Release version and the workflows that check and publish the app |
