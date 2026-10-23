@@ -42,6 +42,8 @@ window.I18N = {
     whoLabel:"Who", whoAnyone:"Anyone", whoTurns:"Take turns", yourTurn:"Your turn", turnOf:n => `${n}'s turn`,
     // shopping
     shopList:"List", shopNeeds:"Needs", shopPast:"Past shops", often:"Often bought",
+    anyShop:"Any shop", anyShopPh:"Shop (optional)", allShops:"All", shopFilterLbl:"Shopping at",
+    whichShop:"Which shop? Leave it empty for any shop.", otherShops:n => n === 1 ? "1 more item is for another shop." : `${n} more items are for other shops.`, showAll:"Show all",
     finishShop:"Finish shopping", store:"Store (optional)", total:"Total (optional)", receipt:"Receipt photo or PDF (optional)",
     saveTrip:"Save", cancel:"Cancel", tripSaved:"Saved to Past shops", receiptLater:"No connection: add the receipt later in Past shops.",
     items:n => n === 1 ? "1 item" : `${n} items`,
@@ -139,6 +141,8 @@ window.I18N = {
     uploading:"Subiendo…", uploaded:"Adjuntado", cantUpload:"No se ha podido subir el archivo", fileTooBig:"El archivo pasa de 10 MB", needsOnline:"Necesita conexión",
     whoLabel:"Quién", whoAnyone:"Cualquiera", whoTurns:"Por turnos", yourTurn:"Te toca", turnOf:n => `Le toca a ${n}`,
     shopList:"Lista", shopNeeds:"Necesidades", shopPast:"Compras", often:"Lo de siempre",
+    anyShop:"Cualquier tienda", anyShopPh:"Tienda (opcional)", allShops:"Todas", shopFilterLbl:"Comprando en",
+    whichShop:"¿En qué tienda? Déjalo vacío para cualquiera.", otherShops:n => n === 1 ? "1 producto más es de otra tienda." : `${n} productos más son de otras tiendas.`, showAll:"Ver todo",
     finishShop:"Terminar compra", store:"Tienda (opcional)", total:"Total (opcional)", receipt:"Foto o PDF del ticket (opcional)",
     saveTrip:"Guardar", cancel:"Cancelar", tripSaved:"Guardado en Compras", receiptLater:"Sin conexión: añade el ticket más tarde en Compras.",
     items:n => n === 1 ? "1 producto" : `${n} productos`,

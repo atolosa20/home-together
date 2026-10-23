@@ -136,6 +136,8 @@ Notifications need iOS 16.4 or newer, with the app opened from the home-screen i
   storage bucket with the same rule, and open through links that expire.
 - **No connection:** changes are kept on the phone and sent when the connection is back; the header shows how many are waiting.
 - **Shopping:** three parts. **List** for groceries, with your most-bought items as one-tap suggestions.
+  Each item can say which supermarket it's from (or any shop); tap a shop at the top to see just its items, and the
+  app remembers the usual shop for each item.
   **Needs** for bigger things (furniture, a TV, books) by category. **Past shops**: *Finish shopping* keeps what was
   in the basket together, with the store, total and receipt photos or PDFs.
 - **Calendar:** plans can repeat (weekly, monthly, yearly), remind you the evening before or an hour before, and carry
