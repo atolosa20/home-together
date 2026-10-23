@@ -11,6 +11,11 @@ const TEXT: Record<Lang, Record<string, (who: string, text: string) => Message>>
     todo: (w, t) => ({ title: "To-do", body: `${w} added: ${t}`, url: "./#chores" }),
     chore_done: (w, t) => ({ title: "Done ✓", body: `${w} did: ${t}`, url: "./#chores" }),
     todo_done: (w, t) => ({ title: "Done ✓", body: `${w} did: ${t}`, url: "./#chores" }),
+    need: (w, t) => ({ title: "Needs", body: `${w} added: ${t}`, url: "./#groceries" }),
+    shop: (w, t) => ({ title: "Shopping done", body: `${w} finished shopping: ${t}`, tag: "groceries", url: "./#groceries" }),
+    walk: (w) => ({ title: "Dogs", body: `${w} took the dogs out`, tag: "dogs", url: "./#dogs" }),
+    food: (w) => ({ title: "Dogs", body: `${w} fed the dogs`, tag: "dogs", url: "./#dogs" }),
+    med: (w, t) => ({ title: "Medicine given ✓", body: `${w} gave ${t}`, url: "./#dogs" }),
     test: () => ({ title: "Home Together", body: "Notifications work on this phone.", url: "./" }),
   },
   es: {
@@ -20,6 +25,11 @@ const TEXT: Record<Lang, Record<string, (who: string, text: string) => Message>>
     todo: (w, t) => ({ title: "Por hacer", body: `${w} ha añadido: ${t}`, url: "./#chores" }),
     chore_done: (w, t) => ({ title: "Hecho ✓", body: `${w} ha hecho: ${t}`, url: "./#chores" }),
     todo_done: (w, t) => ({ title: "Hecho ✓", body: `${w} ha hecho: ${t}`, url: "./#chores" }),
+    need: (w, t) => ({ title: "Necesidades", body: `${w} ha añadido: ${t}`, url: "./#groceries" }),
+    shop: (w, t) => ({ title: "Compra hecha", body: `${w} ha terminado la compra: ${t}`, tag: "groceries", url: "./#groceries" }),
+    walk: (w) => ({ title: "Perros", body: `${w} ha sacado a los perros`, tag: "dogs", url: "./#dogs" }),
+    food: (w) => ({ title: "Perros", body: `${w} ha dado de comer a los perros`, tag: "dogs", url: "./#dogs" }),
+    med: (w, t) => ({ title: "Medicina dada ✓", body: `${w} le ha dado a ${t}`, url: "./#dogs" }),
     test: () => ({ title: "Home Together", body: "Las notificaciones funcionan en este móvil.", url: "./" }),
   },
 };
