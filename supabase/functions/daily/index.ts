@@ -1,6 +1,8 @@
-// Morning reminder: what's due today, today's plans and how much is on the shopping list.
+// Morning reminder: what's due today, today's plans, how much is on the shopping list,
+// and the rainy hours for walks (for whoever turned on rain alerts).
 // Called once a day by the scheduler in supabase/daily-reminder.sql.
 import { addDays, adminClient, cors, Lang, madridToday, occursOn, sendToHousehold, STARTER } from "../_shared/push.ts";
+import { forecast, spells } from "../_shared/weather.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.45.4";
 
 // Fixed monthly costs: once their day of the month has come (the last day for 29–31 in short months),
@@ -31,7 +33,7 @@ Deno.serve(async (req) => {
   const admin = adminClient();
   const today = madridToday();
   await addFixedCosts(admin, today);
-  const { data: homes } = await admin.from("households").select("id");
+  const { data: homes } = await admin.from("households").select("id, lat, lon");
   let sent = 0;
 
   for (const h of homes ?? []) {
@@ -45,9 +47,20 @@ Deno.serve(async (req) => {
     const { data: meds } = await admin.from("dog_meds").select("name, every, start_date, last_given, dogs(name)").eq("household_id", h.id).gt("every", 0);
     const medsDue = (meds ?? []).filter((m) => (m.last_given ? addDays(m.last_given, m.every) : m.start_date) <= today)
       .map((m) => `${(m.dogs as { name?: string } | null)?.name ?? ""}: ${m.name}`);
-    if (!due.length && !events.length && !medsDue.length) continue; // nothing to say today
+    // Rain between 07:00 and 22:00, told only to those who asked for rain alerts.
+    let rain: ReturnType<typeof spells> = [], rainFor = new Set<string>();
+    if (h.lat != null && h.lon != null) {
+      const { data: wanted } = await admin.from("members").select("user_id").eq("household_id", h.id).eq("rain_alerts", true);
+      rainFor = new Set((wanted ?? []).map((m) => m.user_id));
+      if (rainFor.size) {
+        const hours = (await forecast(h.lat, h.lon)) ?? [];
+        rain = spells(hours.filter((x) => x.t.startsWith(today) && x.t.slice(11, 13) >= "07" && x.t.slice(11, 13) < "22"));
+      }
+    }
+    if (!due.length && !events.length && !medsDue.length && !rain.length) continue; // nothing to say today
 
-    sent += await sendToHousehold(admin, h.id, (lang: Lang) => {
+
+    sent += await sendToHousehold(admin, h.id, (lang: Lang, userId: string) => {
       const es = lang === "es";
       const parts: string[] = [];
       if (due.length) {
@@ -59,6 +72,12 @@ Deno.serve(async (req) => {
       }
       if (medsDue.length) parts.push((es ? "Medicinas: " : "Medicines: ") + medsDue.join(", "));
       if (toBuy) parts.push(es ? `${toBuy} por comprar` : `${toBuy} to buy`);
+      const rainForMe = rain.length > 0 && rainFor.has(userId);
+      if (!due.length && !events.length && !medsDue.length && !rainForMe) return null; // only rain, and not for this person
+      if (rainForMe) {
+        const peak = Math.max(...rain.map((r) => r.peak));
+        parts.push((es ? "Paseos: lluvia " : "Walks: rain ") + rain.slice(0, 3).map((r) => `${r.from}–${r.to}`).join(", ") + ` (${peak}${es ? " %" : "%"})`);
+      }
       return { title: es ? "Hoy en casa" : "Today at home", body: parts.join(" · "), tag: "daily", url: "./#today" };
     });
   }

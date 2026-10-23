@@ -183,7 +183,7 @@ const TABLES = {
   chores: () => sb.from("chores").select("*").order("created_at"),
   events: () => sb.from("events").select("*").order("date"),
   dogs: () => sb.from("dogs").select("*").order("created_at"),
-  members: () => sb.from("members").select("user_id, display_name, lang, created_at").order("created_at"),
+  members: () => sb.from("members").select("user_id, display_name, lang, rain_alerts, created_at").order("created_at"),
   needs: () => sb.from("needs").select("*").order("created_at"),
   shopping_trips: () => sb.from("shopping_trips").select("*").order("created_at", { ascending: false }),
   attachments: () => sb.from("attachments").select("*").order("created_at"),
@@ -200,15 +200,34 @@ async function load(name) {
   if (error) return;
   S[name] = data || [];
   queue.filter(op => op.t === name).forEach(applyOp); // changes still waiting to be sent
-  render();
+  render(); keepCopy();
   if (name === "dogs") loadPhotos();
   if (name === "attachments" && ui.filesFor && !$("#settings").hidden) renderFiles();
 }
 async function loadHome() {
-  const { data } = await sb.from("households").select("id, name, invite_code").eq("id", hid).maybeSingle();
-  S.home = data; render();
+  const { data, error } = await sb.from("households").select("id, name, invite_code, place, lat, lon").eq("id", hid).maybeSingle();
+  if (error) return;
+  S.home = data; render(); keepCopy();
 }
 async function loadAll() { await Promise.all([...Object.keys(TABLES).map(load), loadHome()]); }
+
+// A copy of the home's data on the phone, so the app opens with everything even without a connection.
+// Text only (no photos or files): a few hundred KB at most.
+const copyKey = id => "ht-data-" + id;
+function keepCopy() {
+  clearTimeout(keepCopy.h);
+  keepCopy.h = setTimeout(() => { if (me && hid) try { localStorage.setItem(copyKey(me), JSON.stringify({ hid, S })); } catch (e) {} }, 1000);
+}
+function readCopy(id) { try { const c = JSON.parse(localStorage.getItem(copyKey(id)) || "null"); return c && c.hid ? c : null; } catch (e) { return null; } }
+function openCopy(c) { hid = c.hid; Object.assign(S, c.S); queue.forEach(applyOp); }
+// Who is signed in on this phone, even when the sign-in can't be renewed offline.
+function storedUser() {
+  try {
+    const k = Object.keys(localStorage).find(k => /^sb-.+-auth-token$/.test(k));
+    return k ? JSON.parse(localStorage.getItem(k))?.user?.id || null : null;
+  } catch (e) { return null; }
+}
+window.addEventListener("online", () => { if (hid) { loadAll(); if (!online) subscribe(); } });
 
 const reloadSoon = {};
 function subscribe() {
@@ -532,6 +551,7 @@ function viewDogs() {
   const vet = upcoming(999).filter(e => e.cat === "dogs").slice(0, 6), log = todaysLog();
   return `
   ${dogButtons()}
+  ${weatherCard()}
   <section class="sec"><h2>${T("todayLbl2")}</h2>
     <div class="card list">${log.length ? log.map(l => `<div class="row"><span class="log-ic">${LOG_ICON[l.kind] || ""}</span>
       <div class="main"><div class="t">${esc(l.kind === "med" ? `${dogName(l.dog_id)}: ${l.detail}` : T(l.kind === "walk" ? "logWalk" : "logFood"))} · ${hhmm(l.at)}</div><div class="s">${esc(who(l.by_user))}</div></div>${delBtn("dog_log", l.id)}</div>`).join("")
@@ -776,6 +796,96 @@ function exportCsv(scope) {
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
+// ---------- weather for walks (Open-Meteo: free, no key) ----------
+// The home's town is shared; the forecast is kept on the phone for 30 minutes (and shown offline while it lasts).
+// Keep wet() in step with supabase/functions/_shared/weather.ts.
+const wet = h => (h.prob ?? 0) >= 50 || (h.mm ?? 0) >= 0.5;
+let wx = null;
+try { wx = JSON.parse(localStorage.getItem("ht-wx") || "null"); } catch (e) {}
+const wxKey = () => S.home?.lat != null ? `${S.home.lat},${S.home.lon}` : "";
+async function loadWeather() {
+  const key = wxKey(); if (!key || loadWeather.busy) return;
+  if (wx && wx.key === key && Date.now() - wx.at < 30 * 60000) return;
+  if (Date.now() - (loadWeather.failed || 0) < 5 * 60000) return;
+  loadWeather.busy = true;
+  try {
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.home.lat}&longitude=${S.home.lon}` +
+      "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day&timezone=Europe%2FMadrid&forecast_days=2");
+    if (!r.ok) throw new Error(r.status);
+    const H = (await r.json()).hourly;
+    wx = { key, at: Date.now(), hours: H.time.map((t, i) => ({ t, temp: H.temperature_2m[i], prob: H.precipitation_probability[i], mm: H.precipitation[i], code: H.weather_code[i], day: H.is_day[i] })) };
+    try { localStorage.setItem("ht-wx", JSON.stringify(wx)); } catch (e) {}
+    if (tab === "dogs") render();
+  } catch (e) { loadWeather.failed = Date.now(); }
+  finally { loadWeather.busy = false; }
+}
+function wxIcon(c, day) {
+  if (c >= 95) return "⛈️";
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return "🌨️";
+  if (c >= 61) return "🌧️";
+  if (c >= 51) return "🌦️";
+  if (c >= 45) return "🌫️";
+  if (c === 3) return "☁️";
+  if (c >= 1) return day ? "🌤️" : "☁️";
+  return day ? "☀️" : "🌙";
+}
+// The next 12 hours from the start of this one.
+const nextHours = () => {
+  const d = new Date(), from = `${today()}T${pad(d.getHours())}:00`;
+  return (wx && wx.key === wxKey() ? wx.hours : []).filter(h => h.t >= from).slice(0, 12);
+};
+function rainLine(hours) {
+  const i = hours.findIndex(wet);
+  if (i < 0) return T("wxDry");
+  let j = i; while (j < hours.length && wet(hours[j])) j++;
+  const peak = Math.max(...hours.slice(i, j).map(h => h.prob ?? 0));
+  const to = j < hours.length ? hours[j].t.slice(11, 16) : "";
+  return i === 0 ? T("wxNow")(to) : T("wxLater")(hours[i].t.slice(11, 16), to, peak);
+}
+function weatherCard() {
+  if (!S.home?.place) return `<div class="card wx"><b>${T("wxTitle")}</b><p class="hint" style="margin:0">${T("wxSetTown")}</p>
+    <button class="btn ghost small" data-act="open-settings" style="align-self:flex-start">${T("wxChoose")}</button></div>`;
+  loadWeather();
+  const hours = nextHours();
+  if (!hours.length) return `<div class="card wx"><b>${T("wxTitle")} · ${esc(S.home.place)}</b><p class="hint" style="margin:0">${T(navigator.onLine ? "wxLoading" : "wxOffline")}</p></div>`;
+  const rain = hours.some(wet);
+  return `<div class="card wx">
+    <div class="kv"><b>${T("wxTitle")} · ${esc(S.home.place)}</b><span class="wx-temp">${wxIcon(hours[0].code, hours[0].day)} ${Math.round(hours[0].temp)}°</span></div>
+    <div class="wx-line${rain ? " rainy" : ""}">${esc(rainLine(hours))}</div>
+    <div class="wx-hours">${hours.map(h => `<div class="wx-h${wet(h) ? " wet" : ""}"><span>${h.t.slice(11, 13)}h</span><span aria-hidden="true">${wxIcon(h.code, h.day)}</span><span>${h.prob ?? 0}%</span></div>`).join("")}</div>
+  </div>`;
+}
+function weatherSettings() {
+  const mine = S.members.find(m => m.user_id === me), place = S.home?.place;
+  const search = `<form id="fPlace" class="row-form"><input type="text" id="plName" placeholder="${esc(T("wxTown"))}" aria-label="${esc(T("wxTown"))}" autocomplete="off" required>
+      <button class="btn small">${T("wxSearch")}</button></form>
+    ${ui.places ? (ui.places.length ? `<div class="wx-places">${ui.places.map((p, i) => `<button class="btn ghost small" data-act="wx-pick" data-i="${i}">${esc([p.name, p.admin1, p.country].filter(Boolean).join(", "))}</button>`).join("")}</div>` : `<p class="hint" style="margin:0">${T("wxNone")}</p>`) : ""}
+    <div class="kv"><button class="btn ghost small" data-act="wx-here">📍 ${T("wxHere")}</button>${place ? `<button class="btn ghost small" data-act="wx-cancel">${T("cancel")}</button>` : ""}</div>`;
+  return `<div class="card"><b>${T("wxTitle")}</b><p class="hint" style="margin:0">${T("wxHint")}</p>
+    ${place && !ui.placeEdit ? `<div class="kv"><span>📍 ${esc(place)}</span><button class="btn ghost small" data-act="wx-change">${T("wxChange")}</button></div>` : search}
+    <label class="toggle"><input type="checkbox" id="wxAlerts" ${mine?.rain_alerts ? "checked" : ""} ${place ? "" : "disabled"}> ${T("wxAlerts")}</label>
+    <p class="hint" style="margin:0">${T("wxAlertsHint")}</p></div>`;
+}
+async function findPlace(name) {
+  try {
+    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=${lang}&format=json`);
+    ui.places = (await r.json()).results || [];
+  } catch (e) { toast("needsOnline"); return; }
+  await renderSettings();
+}
+async function savePlace(values) {
+  ui.places = null; ui.placeEdit = false; wx = null;
+  S.home = { ...S.home, ...values };
+  if (!await run(sb.from("households").update(values).eq("id", hid), "wxSaved")) loadHome();
+  render(); await renderSettings();
+}
+function placeHere() {
+  if (!navigator.geolocation) { toast("wxNoLocation"); return; }
+  navigator.geolocation.getCurrentPosition(
+    p => savePlace({ place: T("wxHereName"), lat: Math.round(p.coords.latitude * 100) / 100, lon: Math.round(p.coords.longitude * 100) / 100 }),
+    () => toast("wxNoLocation"), { timeout: 15000, maximumAge: 600000 });
+}
+
 const VIEWS = { today: viewToday, groceries: viewShopping, money: viewMoney, chores: viewChores, calendar: viewCalendar, dogs: viewDogs };
 
 // ---------- settings sheet ----------
@@ -812,6 +922,7 @@ async function renderSettings() {
       <div class="kv"><span class="code" id="inviteCode">${esc(S.home?.invite_code || "")}</span><button class="btn small" data-act="copy-code">${T("copy")}</button></div></div>
     <div class="card"><b>${T("members")}</b>${S.members.map(m => `<div>${esc(m.display_name || "—")}${m.user_id === me ? ` <span class="chip">${T("you_")}</span>` : ""}</div>`).join("")}</div>
     <div class="card"><b>${T("notif")}</b>${notifBody}</div>
+    ${weatherSettings()}
     <div class="card"><div class="kv"><b>${T("language")}</b>
       <div class="lang" role="group"><button data-lang="en" aria-pressed="${lang === "en"}">EN</button><button data-lang="es" aria-pressed="${lang === "es"}">ES</button></div></div></div>
     <div class="card"><b>${T("scTitle")}</b><p class="hint" style="margin:0">${T("scHint")}</p>
@@ -826,7 +937,7 @@ async function renderSettings() {
   </div>`;
 }
 async function openSettings() { $("#settings").hidden = false; await renderSettings(); }
-function closeSettings() { $("#settings").hidden = true; $("#settings").innerHTML = ""; ui.filesFor = null; }
+function closeSettings() { $("#settings").hidden = true; $("#settings").innerHTML = ""; ui.filesFor = null; ui.places = null; ui.placeEdit = false; }
 
 // ---------- files (receipts, tickets, bookings) ----------
 // Stored privately in the "files" bucket under <household id>/; the database rules keep each home's files to itself.
@@ -1066,6 +1177,11 @@ document.addEventListener("click", async ev => {
     case "mon": { const [y, m] = calMonth.split("-").map(Number); calMonth = ymd(new Date(y, m - 1 + Number(b.dataset.n), 1)).slice(0, 7); render(); return; }
     case "pick": calSel = b.dataset.d; calMonth = calSel.slice(0, 7); render(); return;
     case "close-settings": closeSettings(); return;
+    case "open-settings": openSettings(); return;
+    case "wx-change": ui.placeEdit = true; ui.places = null; renderSettings(); return;
+    case "wx-cancel": ui.placeEdit = false; ui.places = null; renderSettings(); return;
+    case "wx-here": placeHere(); return;
+    case "wx-pick": { const p = ui.places?.[Number(b.dataset.i)]; if (!p) return; savePlace({ place: p.name, lat: Math.round(p.latitude * 100) / 100, lon: Math.round(p.longitude * 100) / 100 }); return; }
     case "copy-code": {
       try { await navigator.clipboard.writeText(S.home?.invite_code || ""); toast("copied"); }
       catch (e) { const r = document.createRange(); r.selectNodeContents($("#inviteCode")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
@@ -1074,7 +1190,10 @@ document.addEventListener("click", async ev => {
     case "push-on": pushOn().catch(e => { console.error(e); toast("cantSave"); }); return;
     case "push-off": pushOff().catch(() => {}); return;
     case "push-test": notify("test", ""); toast("testSent"); return;
-    case "sign-out": await pushOff().catch(() => {}); await sb.auth.signOut(); closeSettings(); return;
+    case "sign-out": {
+      try { localStorage.removeItem(copyKey(me)); localStorage.removeItem("ht-wx"); } catch (e) {}
+      clearTimeout(keepCopy.h); await pushOff().catch(() => {}); await sb.auth.signOut(); closeSettings(); return;
+    }
   }
 });
 
@@ -1082,6 +1201,7 @@ document.addEventListener("submit", async ev => {
   ev.preventDefault();
   const f = ev.target, v = id => (document.getElementById(id)?.value || "").trim();
   if (f.id === "fAuth") return submitAuth();
+  if (f.id === "fPlace") return findPlace(v("plName"));
   if (f.id === "fSetup") return submitSetup();
   if (f.id === "fGroc") {
     const name = v("gName"), qty = v("gQty"); if (!name) return; ui.grocCat = v("gCat"); try { localStorage.setItem("ht-grocCat", ui.grocCat); } catch (e) {}
@@ -1141,6 +1261,10 @@ document.addEventListener("submit", async ev => {
 // File pickers: the receipt is kept aside so a live refresh of the list can't drop it.
 document.addEventListener("change", ev => {
   if (ev.target.id === "fReceipt") ui.receiptFiles = [...ev.target.files];
+  if (ev.target.id === "wxAlerts") {
+    const on = ev.target.checked, m = S.members.find(x => x.user_id === me); if (m) m.rain_alerts = on;
+    run(sb.from("members").update({ rain_alerts: on }).eq("user_id", me), on ? "wxAlertsOn" : "wxAlertsOff").then(ok => { if (!ok) { load("members"); ev.target.checked = !on; } });
+  }
   if (ev.target.id === "dgPhoto" && ev.target.files[0]) {
     ui.dogPhoto = ev.target.files[0];
     const img = document.createElement("img"); img.className = "av photo"; img.id = "dgPrev"; img.alt = ""; img.src = URL.createObjectURL(ui.dogPhoto);
@@ -1214,12 +1338,23 @@ async function enterApp() {
 }
 
 async function onSession(session) {
-  if (!session) { me = null; hid = null; if (channel) { sb.removeChannel(channel); channel = null; } show("authGate"); applyStatic(); return; }
+  if (!session) {
+    // Still signed in, but the sign-in can't be renewed without a connection: open the copy on the phone.
+    const uid = storedUser(), copy = uid && readCopy(uid);
+    if (copy) { if (me !== uid) { me = uid; loadQueue(); openCopy(copy); enterApp(); } return; }
+    me = null; hid = null; if (channel) { sb.removeChannel(channel); channel = null; } show("authGate"); applyStatic(); return;
+  }
   if (me === session.user.id) return; // already handled (sign-in fires twice on load)
   me = session.user.id; loadQueue();
-  const { data } = await sb.from("members").select("household_id, lang").eq("user_id", me).maybeSingle();
-  if (data) { hid = data.household_id; await enterApp(); }
-  else { show("setupGate"); setSetupMode("create"); }
+  const copy = readCopy(me);
+  if (copy) { openCopy(copy); enterApp(); } // show the copy on the phone straight away, then refresh
+  const { data, error } = await sb.from("members").select("household_id, lang").eq("user_id", me).maybeSingle();
+  if (error) {
+    if (!copy) { toast("needsOnline"); window.addEventListener("online", () => { me = null; onSession(session); }, { once: true }); }
+    return;
+  }
+  if (data) { if (data.household_id !== hid) { hid = data.household_id; await enterApp(); } }
+  else { hid = null; show("setupGate"); setSetupMode("create"); }
 }
 
 // ---------- app updates ----------
