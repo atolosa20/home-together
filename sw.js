@@ -1,5 +1,5 @@
 // Service worker: shows push notifications and keeps the app shell available offline.
-const CACHE = "home-together-v1";
+const CACHE = "home-together-v2";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "i18n.js", "config.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png"];
 
 self.addEventListener("install", e => {
@@ -11,11 +11,13 @@ self.addEventListener("activate", e => {
 });
 
 // Network first, so updates arrive straight away; fall back to the cache when offline.
+// Files are revalidated with the server so a new release isn't hidden behind the browser cache.
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
+  const req = e.request.mode === "navigate" ? e.request : new Request(e.request, { cache: "no-cache" });
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(req).then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy));
       return res;

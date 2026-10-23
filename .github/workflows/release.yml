@@ -1,0 +1,55 @@
+# Puts the app online only when a GitHub release is published, not on every push.
+# The release tag and notes become version.json, which the app reads to show "New version available".
+name: Publish release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: # publish the latest release again by hand
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Read the release
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            jq '.release | {version: .tag_name, name: .name, notes: (.body // ""), date: .published_at}' "$GITHUB_EVENT_PATH" > version.json
+          else
+            gh release view --repo "$GITHUB_REPOSITORY" --json tagName,name,body,publishedAt \
+              --jq '{version: .tagName, name: .name, notes: (.body // ""), date: .publishedAt}' > version.json
+          fi
+          cat version.json
+          echo "tag=$(jq -r .version version.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.rel.outputs.tag }}
+          path: src
+
+      - name: Build the site (app files only)
+        run: |
+          mkdir _site
+          cd src
+          cp -r index.html styles.css app.js i18n.js config.js sw.js manifest.webmanifest icons ../_site/
+          cp ../version.json ../_site/version.json
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+      - id: deploy
+        uses: actions/deploy-pages@v4
