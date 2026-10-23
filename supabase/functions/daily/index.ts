@@ -1,6 +1,28 @@
 // Morning reminder: what's due today, today's plans and how much is on the shopping list.
 // Called once a day by the scheduler in supabase/daily-reminder.sql.
 import { addDays, adminClient, cors, Lang, madridToday, occursOn, sendToHousehold, STARTER } from "../_shared/push.ts";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.45.4";
+
+// Fixed monthly costs: once their day of the month has come (the last day for 29–31 in short months),
+// add them as an expense, at most once a month.
+async function addFixedCosts(admin: SupabaseClient, today: string) {
+  const month = today.slice(0, 8) + "01", [y, m, d] = today.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const { data: costs } = await admin.from("fixed_costs").select("*").eq("active", true).lte("start_month", month);
+  for (const c of costs ?? []) {
+    if (c.last_month && c.last_month >= month) continue;
+    const day = Math.min(c.day, lastDay);
+    if (d < day) continue;
+    // Claim the month first, so two runs can never add it twice.
+    const { data: claimed } = await admin.from("fixed_costs").update({ last_month: month }).eq("id", c.id)
+      .or(`last_month.is.null,last_month.lt.${month}`).select("id");
+    if (!claimed?.length) continue;
+    await admin.from("expenses").insert({
+      household_id: c.household_id, amount: c.amount, cat: c.cat, spent_on: `${today.slice(0, 8)}${String(day).padStart(2, "0")}`,
+      paid_by: c.paid_by, note: c.name, private: c.private, fixed_id: c.id, created_by: c.created_by,
+    });
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -8,6 +30,7 @@ Deno.serve(async (req) => {
 
   const admin = adminClient();
   const today = madridToday();
+  await addFixedCosts(admin, today);
   const { data: homes } = await admin.from("households").select("id");
   let sent = 0;
 

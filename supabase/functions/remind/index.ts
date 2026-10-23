@@ -8,6 +8,18 @@ const TEXT: Record<Lang, { title: string; day: string; hour: string }> = {
   es: { title: "Recordatorio", day: "Mañana", hour: "En 1 hora" },
 };
 
+const BUDGET: Record<Lang, { title: string; near: (cat: string, s: string, b: string) => string; over: (cat: string, s: string, b: string) => string; cats: Record<string, string> }> = {
+  en: {
+    title: "Budget", near: (c, s, b) => `${c}: ${s} of ${b} this month (80%)`, over: (c, s, b) => `${c}: ${s} of ${b} — over budget this month`,
+    cats: { groceries: "Groceries", home: "Home", bills: "Bills", dogs: "Dogs", eating_out: "Eating out", transport: "Transport", leisure: "Leisure", health: "Health", clothes: "Clothes", gifts: "Gifts", other: "Other" },
+  },
+  es: {
+    title: "Presupuesto", near: (c, s, b) => `${c}: ${s} de ${b} este mes (80 %)`, over: (c, s, b) => `${c}: ${s} de ${b} — os habéis pasado este mes`,
+    cats: { groceries: "Supermercado", home: "Casa", bills: "Facturas", dogs: "Perros", eating_out: "Comer fuera", transport: "Transporte", leisure: "Ocio", health: "Salud", clothes: "Ropa", gifts: "Regalos", other: "Otros" },
+  },
+};
+const euros = (lang: Lang, n: number) => new Intl.NumberFormat(lang === "es" ? "es-ES" : "en-IE", { style: "currency", currency: "EUR" }).format(n);
+
 const MED: Record<Lang, { title: string; body: (dog: string, med: string) => string; low: (n: number) => string }> = {
   en: { title: "Medicine", body: (d, m) => `Time for ${d}'s ${m}`, low: (n) => ` · only ${n} left, buy more` },
   es: { title: "Medicina", body: (d, m) => `Toca darle a ${d}: ${m}`, low: (n) => ` · quedan ${n}, hay que comprar más` },
@@ -48,6 +60,30 @@ Deno.serve(async (req) => {
       url: "./#calendar",
     }));
   }
+  // Budgets: tell both phones when a category reaches 80% and when it goes over, once each per month.
+  // Only shared spending counts ("only me" expenses stay private).
+  const month = today.slice(0, 8) + "01";
+  const { data: budgets } = await admin.from("budgets").select("household_id, cat, amount");
+  if (budgets?.length) {
+    const { data: spent } = await admin.from("expenses").select("household_id, cat, amount")
+      .eq("private", false).gte("spent_on", month).lte("spent_on", today);
+    const total = new Map<string, number>();
+    for (const x of spent ?? []) total.set(`${x.household_id}|${x.cat}`, (total.get(`${x.household_id}|${x.cat}`) ?? 0) + Number(x.amount));
+    for (const b of budgets) {
+      const s = total.get(`${b.household_id}|${b.cat}`) ?? 0, limit = Number(b.amount);
+      const level = s >= limit ? 100 : s >= limit * 0.8 ? 80 : 0;
+      if (!level) continue;
+      // Going straight over 100% also counts as the 80% one, so it isn't sent afterwards.
+      const rows = (level === 100 ? [80, 100] : [80]).map((l) => ({ household_id: b.household_id, cat: b.cat, month, level: l }));
+      const { data: added } = await admin.from("budget_alerts").upsert(rows, { onConflict: "household_id,cat,month,level", ignoreDuplicates: true }).select("level");
+      if (!added?.some((a) => a.level === level)) continue;
+      sent += await sendToHousehold(admin, b.household_id, (lang) => {
+        const t = BUDGET[lang], cat = t.cats[b.cat] ?? b.cat;
+        return { title: t.title, body: (level === 100 ? t.over : t.near)(cat, euros(lang, s), euros(lang, limit)), tag: `budget-${b.cat}`, url: "./#money" };
+      });
+    }
+  }
+
   // Dog medicines: from their time of day on each day they are due, once a day until someone taps "Given".
   const { data: meds } = await admin.from("dog_meds")
     .select("id, household_id, name, dose, every, start_date, last_given, at_time, stock, dogs(name)").gt("every", 0);

@@ -5,7 +5,8 @@ import { adminClient } from "../_shared/push.ts";
 
 // Not exported: push_subscriptions (phone addresses) and shortcut_tokens (personal links).
 const TABLES = ["households", "members", "groceries", "grocery_history", "chores", "events", "event_reminders",
-  "dogs", "dog_meds", "dog_log", "med_reminders", "needs", "shopping_trips", "attachments"];
+  "dogs", "dog_meds", "dog_log", "med_reminders", "needs", "shopping_trips", "attachments",
+  "expenses", "fixed_costs", "budgets", "budget_alerts"];
 
 Deno.serve(async (req) => {
   const secret = Deno.env.get("BACKUP_SECRET");

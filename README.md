@@ -148,6 +148,14 @@ Notifications need iOS 16.4 or newer, with the app opened from the home-screen i
   reminder when one is due, and **Given** tells your partner which dog got what.
 - **Walks from an iPhone Shortcut:** Settings has a personal link for the Shortcuts app, for example to log a walk when
   you leave home. iPhone doesn't let apps see AirTags, so this is the closest thing to automatic.
+- **Spending:** a tab with each month's total (and the change from last month), what each of you paid, bars per
+  category, totals per shop (Amazon, IKEA, Mercadona…; any new shop typed is remembered), and every expense with its
+  receipt. *Finish shopping* with a total adds a Groceries expense; ticking off a Need adds it with its price, shop and
+  category (it asks for the price if there isn't one). **Fixed monthly costs** (rent, bills, subscriptions) are added on
+  their day by the morning job. Tap a category to set a **monthly budget**: the bar turns amber at 80% and red when over,
+  and both phones get a notification once per level each month. Expenses marked **Only me** are visible only to whoever
+  added them (enforced by the database) and don't count towards the shared budget notifications. **Download for Excel**
+  gives the month or the year as a CSV file.
 - **Text size:** the app follows the iPhone text size setting.
 - **Your data:** Settings → *Download a copy* saves everything in the home as a file.
 
