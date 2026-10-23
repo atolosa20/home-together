@@ -25,6 +25,9 @@ window.I18N = {
     notifDenied:"Notifications are blocked. Turn them on in iPhone Settings → Notifications → Home.",
     notifUnsupported:"This browser can't receive notifications.", testSent:"Test sent",
     language:"Language", you_:"You", signOut:"Sign out", close:"Close", members:"In this home",
+    // updates
+    updateReady:"New version available", updateApply:"Update now", updateLater:"Later",
+    whatsNew:"What's new", gotIt:"Got it", version:"Version",
     // general
     cantSave:"Couldn't save — check your connection", deleted:"Deleted", del:"Delete", delAria:"Delete",
     added:"Added", addedCal:"Added to the calendar", renamed:"Renamed",
@@ -82,6 +85,8 @@ window.I18N = {
     notifDenied:"Las notificaciones están bloqueadas. Actívalas en Ajustes del iPhone → Notificaciones → Home.",
     notifUnsupported:"Este navegador no puede recibir notificaciones.", testSent:"Prueba enviada",
     language:"Idioma", you_:"Tú", signOut:"Cerrar sesión", close:"Cerrar", members:"En esta casa",
+    updateReady:"Nueva versión disponible", updateApply:"Actualizar", updateLater:"Más tarde",
+    whatsNew:"Novedades", gotIt:"Entendido", version:"Versión",
     cantSave:"No se ha podido guardar — revisa la conexión", deleted:"Borrado", del:"Borrar", delAria:"Borrar",
     added:"Añadido", addedCal:"Añadido al calendario", renamed:"Nombre cambiado",
     markedDone:"¡Bien! Marcado como hecho", basketCleared:"Carrito vaciado",

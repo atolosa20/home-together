@@ -1,0 +1,16 @@
+# Quick check on every pull request: the app's scripts must at least parse.
+name: Check
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: for f in app.js i18n.js sw.js config.js; do node --check "$f"; done
+      - run: node -e "JSON.parse(require('fs').readFileSync('manifest.webmanifest','utf8')); JSON.parse(require('fs').readFileSync('version.json','utf8'))"

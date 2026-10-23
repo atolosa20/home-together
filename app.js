@@ -288,6 +288,7 @@ async function renderSettings() {
     <div class="card"><div class="kv"><b>${T("language")}</b>
       <div class="lang" role="group"><button data-lang="en" aria-pressed="${lang === "en"}">EN</button><button data-lang="es" aria-pressed="${lang === "es"}">ES</button></div></div></div>
     <button class="btn ghost" data-act="sign-out">${T("signOut")}</button>
+    <p class="hint" style="margin:0;text-align:center">${T("version")} ${esc(running?.version || "dev")}</p>
   </div>`;
 }
 async function openSettings() { $("#settings").hidden = false; await renderSettings(); }
@@ -493,6 +494,44 @@ async function onSession(session) {
   if (data) { hid = data.household_id; await enterApp(); }
   else { show("setupGate"); setSetupMode("create"); }
 }
+
+// ---------- app updates ----------
+// version.json is written by the release workflow (.github/workflows/release.yml).
+// The copy read at start is the version running now; later checks spot a newer release.
+let running = null, dismissed = null;
+const fetchVersion = () => fetch("version.json", { cache: "no-store" }).then(r => r.ok ? r.json() : null).catch(() => null);
+const summary = s => String(s || "").replace(/\r/g, "").replace(/^#+\s*/gm, "").replace(/\*\*|__|`/g, "").trim().slice(0, 280);
+function rememberVersion(v) { try { localStorage.setItem("ht-version", v); } catch (e) {} }
+function showUpdate(v, fresh) {
+  const notes = summary(v.notes);
+  $("#update").innerHTML = `<div class="ver">${T(fresh ? "whatsNew" : "updateReady")} · ${esc(v.version)}</div>
+    ${notes ? `<p>${esc(notes)}</p>` : ""}
+    <div class="kv">${fresh
+      ? `<span></span><button class="btn small" data-up="ok">${T("gotIt")}</button>`
+      : `<button class="btn ghost small" data-up="later">${T("updateLater")}</button><button class="btn small" data-up="apply">${T("updateApply")}</button>`}</div>`;
+  $("#update").dataset.version = v.version;
+  $("#update").hidden = false;
+}
+$("#update").addEventListener("click", e => {
+  const b = e.target.closest("[data-up]"); if (!b) return;
+  const v = $("#update").dataset.version;
+  if (b.dataset.up === "apply") { rememberVersion(v); location.reload(); return; }
+  if (b.dataset.up === "later") dismissed = v;
+  $("#update").hidden = true;
+});
+async function checkUpdate() {
+  if (!running) return;
+  const v = await fetchVersion();
+  if (v && v.version !== running.version && v.version !== dismissed) showUpdate(v, false);
+}
+fetchVersion().then(v => {
+  running = v; if (!v || v.version === "dev") return;
+  let seen = null; try { seen = localStorage.getItem("ht-version"); } catch (e) {}
+  rememberVersion(v.version);
+  if (seen && seen !== v.version) showUpdate(v, true); // the app updated itself on open: say what's new
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });
+setInterval(checkUpdate, 30 * 60000);
 
 // ---------- boot ----------
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

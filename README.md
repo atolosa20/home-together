@@ -125,7 +125,22 @@ Notifications need iOS 16.4 or newer, with the app opened from the home-screen i
 
 ## Updating the app
 
-- **Change the app:** edit the files and upload them to the repository again. The phones pick up the new version the next time the app opens.
+The app online only changes when you **publish a GitHub release**. Pushing or merging to `main` does not change it.
+
+1. Make the change on a branch and open a pull request. The **Check** workflow makes sure the scripts still load.
+2. Merge the pull request into `main`.
+3. Publish a release: on GitHub open **Releases → Draft a new release**, create a tag like `v1.1.0`, and write a short
+   summary in the notes. Or, from PowerShell:
+   ```powershell
+   gh release create v1.1.0 --title "v1.1.0" --notes "Dogs page shows the next vet visit."
+   ```
+4. The **Publish release** workflow puts that version online (about a minute). An open app shows
+   **New version available · v1.1.0** with the summary and an **Update now** button. If the app was closed, it opens on
+   the new version and shows **What's new · v1.1.0** once.
+
+The version number and the first lines of the release notes are what the phones see, so keep the notes short.
+The current version is shown at the bottom of **⚙ Settings**.
+
 - **Change a function:** after editing a file in `supabase/functions`, run the matching `npx supabase functions deploy ...` command again.
 
 ## Files
