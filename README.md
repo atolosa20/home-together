@@ -70,10 +70,11 @@ npx supabase functions deploy notify --no-verify-jwt
 npx supabase functions deploy daily --no-verify-jwt
 npx supabase functions deploy remind --no-verify-jwt
 npx supabase functions deploy walk --no-verify-jwt
+npx supabase functions deploy backup --no-verify-jwt
 ```
 
 Each function checks who is calling itself: `notify` the signed-in user, `daily` and `remind` the cron secret,
-and `walk` the personal Shortcut link.
+`walk` the personal Shortcut link, and `backup` the `BACKUP_SECRET` (set it with `supabase secrets set` too).
 
 `YOUR-PROJECT-REF` is the part of your Project URL before `.supabase.co`.
 
@@ -170,6 +171,19 @@ The current version is shown at the bottom of **⚙ Settings**.
 
 - **Change a function:** after editing a file in `supabase/functions`, run the matching `npx supabase functions deploy ...` command again.
 
+## Backups
+
+Every Sunday at 13:00 the PC saves a full copy into **OneDrive → Home Together backups → (date)**:
+`data.json` with everything in the app, and `files/` with receipts, tickets and dog photos. The last 8 are kept.
+If the PC is off on Sunday, it runs the next time it's on and connected.
+
+- It reads through the `backup` function, which can only read, never change anything. Its key (`BACKUP_SECRET`) is
+  stored in `%LOCALAPPDATA%\HomeTogetherBackup\key.txt`, encrypted by Windows so it only works for your user on this PC.
+- Each run adds a line to `%LOCALAPPDATA%\HomeTogetherBackup\backup.log` (OK or FAILED with the reason).
+- See or change it in **Task Scheduler → Home Together backup**. To run one now:
+  `Start-ScheduledTask -TaskName "Home Together backup"`.
+- `backup/backup.ps1` in this folder is the script that is installed there.
+
 ## Files
 
 | Path | What it is |
@@ -182,6 +196,8 @@ The current version is shown at the bottom of **⚙ Settings**.
 | `supabase/functions/daily` | Sends the morning reminder |
 | `supabase/functions/remind` | Reminders before plans, and dog medicines when due |
 | `supabase/functions/walk` | Logs a dog walk from an iPhone Shortcut |
+| `supabase/functions/backup` | Read-only export used by the weekly PC backup |
+| `backup/backup.ps1` | The weekly backup script (installed in `%LOCALAPPDATA%\HomeTogetherBackup`) |
 | `supabase/migrations/` | Database changes, applied with `npx supabase db push` |
 | `supabase/daily-reminder.sql` | Schedules the morning reminder |
 | `supabase/reminders.sql` | Schedules the 15-minute reminder check |
