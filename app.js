@@ -1084,9 +1084,8 @@ function applyStatic() {
   $("#aSubmit").textContent = T(ui.authMode === "signin" ? "signIn" : "signUp");
   $("#aSwitch").textContent = T(ui.authMode === "signin" ? "noAccount" : "haveAccount");
   $("#aPass").autocomplete = ui.authMode === "signin" ? "current-password" : "new-password";
-  const shown = $("#aPass").type === "text";
-  $("#aShow").textContent = T(shown ? "hidePw" : "showPw"); $("#aShow").setAttribute("aria-label", T(shown ? "hidePwLong" : "showPwLong"));
-  $("#aShow").setAttribute("aria-pressed", String(shown));
+  const shown = $("#aPass").type === "text", eye = $("#aShow");
+  if (eye) { eye.textContent = T(shown ? "hidePw" : "showPw"); eye.setAttribute("aria-label", T(shown ? "hidePwLong" : "showPwLong")); eye.setAttribute("aria-pressed", String(shown)); }
   $("#sSubmit").textContent = T(ui.setupMode === "create" ? "create" : "join");
   $("#openSettings").setAttribute("aria-label", T("settings"));
 }
@@ -1330,7 +1329,7 @@ $("#homeName").addEventListener("click", onRename);
 
 // ---------- sign in & setup ----------
 // Show or hide the password while typing it.
-$("#aShow").addEventListener("click", () => { const p = $("#aPass"); p.type = p.type === "password" ? "text" : "password"; applyStatic(); p.focus(); });
+$("#aShow")?.addEventListener("click", () => { const p = $("#aPass"); p.type = p.type === "password" ? "text" : "password"; applyStatic(); p.focus(); });
 $("#aSwitch").addEventListener("click", () => { ui.authMode = ui.authMode === "signin" ? "signup" : "signin"; $("#aErr").hidden = true; $("#aOk").hidden = true; applyStatic(); });
 async function submitAuth() {
   const email = $("#aEmail").value.trim(), password = $("#aPass").value;

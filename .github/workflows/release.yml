@@ -48,6 +48,11 @@ jobs:
           cd src
           cp -r index.html styles.css app.js i18n.js config.js sw.js manifest.webmanifest icons ../_site/
           cp ../version.json ../_site/version.json
+          # Each release asks for its own copy of the scripts and styles, so a phone can never mix an old page
+          # with newer scripts (or the other way round) from the browser cache.
+          v="${{ steps.rel.outputs.tag }}"
+          sed -i -E "s#(href|src)=\"(styles\.css|config\.js|i18n\.js|app\.js)\"#\1=\"\2?v=${v}\"#g" ../_site/index.html
+          test "$(grep -c "?v=${v}\"" ../_site/index.html)" -eq 4
 
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

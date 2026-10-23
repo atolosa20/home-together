@@ -1,9 +1,10 @@
 // Service worker: shows push notifications and keeps the app shell available offline.
-const CACHE = "home-together-v7";
+const CACHE = "home-together-v8";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "i18n.js", "config.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // "reload": straight from the server, never an older copy from the browser cache.
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", e => {
@@ -11,17 +12,19 @@ self.addEventListener("activate", e => {
 });
 
 // Network first, so updates arrive straight away; fall back to the cache when offline.
-// Files are revalidated with the server so a new release isn't hidden behind the browser cache.
+// Everything, the page included, is revalidated with the server: GitHub Pages lets browsers keep files
+// for 10 minutes, and an old page with a new app.js stops the app.
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
-  const req = e.request.mode === "navigate" ? e.request : new Request(e.request, { cache: "no-cache" });
+  const req = e.request.mode === "navigate" ? fetch(url.href, { cache: "no-cache", credentials: "same-origin" }).then(r => r.redirected ? fetch(e.request) : r)
+    : fetch(new Request(e.request, { cache: "no-cache" }));
   e.respondWith(
-    fetch(req).then(res => {
+    req.then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy));
       return res;
-    }).catch(() => caches.match(e.request).then(r => r || caches.match("index.html")))
+    }).catch(() => caches.match(e.request).then(r => r || caches.match(e.request, { ignoreSearch: true })).then(r => r || caches.match("index.html")))
   );
 });
 
