@@ -333,13 +333,24 @@ function todoRow(t) {
     ${delBtn("chores", t.id)}</div>`;
 }
 
-// A calm sentence, picked at random each time the app opens (the same one in both languages).
+// A calm sentence for the chakra of the day (Monday root … Sunday crown) and the moon phase, picked at random each time the app opens.
 let mantraAt = Math.random(), mantraOn = true;
 try { mantraOn = localStorage.getItem("ht-mantra") !== "off"; } catch (e) {}
+const CHAKRA_COLORS = ["#C0392B", "#E67E22", "#E2B007", "#27AE60", "#2E86C1", "#4B4FB0", "#8E44AD"];
+const MOON_ICONS = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
+const chakraToday = () => (new Date().getDay() + 6) % 7;
+// 0 new … 4 full … 7 waning crescent, from the moon's age since a known new moon (6 Jan 2000 18:14 UTC).
+function moonPhase(d = new Date()) {
+  const age = ((d.getTime() / 864e5 + 2440587.5 - 2451550.26) / 29.530588853 % 1 + 1) % 1;
+  return Math.floor(age * 8 + 0.5) % 8;
+}
 function mantraCard() {
   if (!mantraOn) return "";
-  const list = T("mantras");
-  return `<button class="card mantra" data-act="mantra-next" aria-label="${esc(T("mantraNext"))}"><span aria-hidden="true">🪷</span><q>${esc(list[Math.floor(mantraAt * list.length)])}</q></button>`;
+  const i = chakraToday(), c = T("chakras")[i], p = moonPhase(), [moonName, moonTip] = T("moon")[p];
+  return `<button class="card mantra" data-act="mantra-next" aria-label="${esc(T("mantraNext"))}" style="--chakra:${CHAKRA_COLORS[i]}">
+    <span class="mantra-meta"><i class="chakra-dot"></i>${T("chakraOf")}: ${esc(c.name)} · ${c.sk}</span>
+    <q>${esc(c.lines[Math.floor(mantraAt * c.lines.length)])}</q>
+    <span class="mantra-moon">${MOON_ICONS[p]} ${esc(moonName)}: ${esc(moonTip)}</span></button>`;
 }
 function viewToday() {
   const d = dueNow(), meds = medsDueNow(), ev = upcoming(5), groc = S.groceries.filter(g => !g.done).length;
@@ -1223,7 +1234,7 @@ document.addEventListener("click", async ev => {
     case "close-settings": closeSettings(); return;
     case "open-settings": openSettings(); return;
     case "mantra-next": {
-      const n = T("mantras").length, i = Math.floor(mantraAt * n);
+      const n = T("chakras")[chakraToday()].lines.length, i = Math.floor(mantraAt * n);
       mantraAt = ((i + 1 + Math.floor(Math.random() * (n - 1))) % n + 0.5) / n; render(); return;
     }
     case "wx-change": ui.placeEdit = true; ui.places = null; renderSettings(); return;
