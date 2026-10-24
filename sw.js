@@ -1,5 +1,5 @@
 // Service worker: shows push notifications and keeps the app shell available offline.
-const CACHE = "home-together-v11";
+const CACHE = "home-together-v12";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "i18n.js", "config.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png"];
 
 self.addEventListener("install", e => {
