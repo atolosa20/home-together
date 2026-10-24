@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir _site
           cd src
-          cp -r index.html styles.css app.js i18n.js config.js sw.js manifest.webmanifest icons ../_site/
+          cp -r index.html styles.css app.js i18n.js config.js sw.js manifest.webmanifest icons vendor ../_site/
           cp ../version.json ../_site/version.json
           # Each release asks for its own copy of the scripts and styles, so a phone can never mix an old page
           # with newer scripts (or the other way round) from the browser cache.

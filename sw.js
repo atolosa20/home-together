@@ -1,6 +1,6 @@
 // Service worker: shows push notifications and keeps the app shell available offline.
-const CACHE = "home-together-v13";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "i18n.js", "config.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png"];
+const CACHE = "home-together-v14";
+const SHELL = ["./", "index.html", "styles.css", "app.js", "i18n.js", "config.js", "vendor/supabase-2.45.4.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png"];
 
 self.addEventListener("install", e => {
   // "reload": straight from the server, never an older copy from the browser cache.
@@ -11,7 +11,8 @@ self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
-// Network first, so updates arrive straight away; fall back to the cache when offline.
+// Network first, so updates arrive straight away; fall back to the cache when offline, or when the
+// network takes over 4 seconds (weak signal) and there is a copy to show.
 // Everything, the page included, is revalidated with the server: GitHub Pages lets browsers keep files
 // for 10 minutes, and an old page with a new app.js stops the app.
 self.addEventListener("fetch", e => {
@@ -19,13 +20,14 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
   const req = e.request.mode === "navigate" ? fetch(url.href, { cache: "no-cache", credentials: "same-origin" }).then(r => r.redirected ? fetch(e.request) : r)
     : fetch(new Request(e.request, { cache: "no-cache" }));
-  e.respondWith(
-    req.then(res => {
-      const copy = res.clone();
-      caches.open(CACHE).then(c => c.put(e.request, copy));
-      return res;
-    }).catch(() => caches.match(e.request).then(r => r || caches.match(e.request, { ignoreSearch: true })).then(r => r || caches.match("index.html")))
-  );
+  const cached = () => caches.match(e.request).then(r => r || caches.match(e.request, { ignoreSearch: true }))
+    .then(r => r || (e.request.mode === "navigate" ? caches.match("index.html") : undefined));
+  const net = req.then(res => {
+    if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
+    return res;
+  });
+  const slow = new Promise(ok => setTimeout(ok, 4000)).then(cached).then(r => r || net);
+  e.respondWith(Promise.race([net, slow]).catch(() => cached().then(r => r || Response.error())));
 });
 
 self.addEventListener("push", e => {
