@@ -382,8 +382,8 @@ function headsUp() {
   const m = today().slice(0, 7);
   const budgets = EXP_KEYS.filter(budgetOf).map(k => [k, sumOf(monthExp(m).filter(e => expCat(e.cat) === k && !e.private)), budgetOf(k)]).filter(([, s, b]) => s >= b * 0.8);
   const rows = [
-    ...suppliesLow().map(s => link("#dogs", LOG_ICON.food, s.name, supplyStatus(s))),
-    ...S.dog_meds.filter(medLow).map(x => link("#dogs", LOG_ICON.med, `${dogName(x.dog_id)}: ${x.name}`, T("left")(x.stock))),
+    ...suppliesLow().map(s => link("#food", LOG_ICON.food, s.name, supplyStatus(s))),
+    ...S.dog_meds.filter(medLow).map(x => link("#health", LOG_ICON.med, `${dogName(x.dog_id)}: ${x.name}`, T("left")(x.stock))),
     ...papersSoon().map(p => paperRow(p, true)),
     ...budgets.map(([k, s, b]) => link("#money", "💶", T("expCats")[k], T("budgetUsed")(money(s), money(b), Math.round(s / b * 100)))),
   ];
@@ -726,39 +726,50 @@ function dogCard(d) {
   const facts = [age(d.birthday), d.breed, d.sex ? T("sexOpts")[d.sex] : "", d.weight].filter(Boolean).map(esc).join(" · ");
   const info = [["dFood", d.food], ["dVet", d.vet], ["dChip", d.chip], ["dHealth", d.health], ["dNotesL", d.notes]].filter(x => x[1])
     .map(([k, val]) => `<div><span class="lbl">${T(k)}</span> ${esc(val)}</div>`).join("");
-  const meds = S.dog_meds.filter(m => m.dog_id === d.id);
   return `<div class="card dog-card">
     <div class="dog">
       ${url ? `<img class="av photo" src="${esc(url)}" alt="">` : `<div class="av">${esc((d.name || "?").trim()[0]?.toUpperCase() || "?")}</div>`}
       <div class="main"><div class="dog-name">${esc(d.name)}</div><div class="s">${facts}</div>${info ? `<div class="dog-info">${info}</div>` : ""}</div>
       <div class="dog-actions"><button class="btn ghost small" data-act="dog-edit" data-id="${esc(d.id)}">${T("editDog")}</button>${delBtn("dogs", d.id)}</div>
     </div>
-    <div class="dog-meds"><div class="sec-head"><span class="eyebrow">${T("medicines")}</span>${ui.medFor === d.id ? "" : `<button class="btn ghost small" data-act="med-add" data-id="${esc(d.id)}">+ ${T("addMed")}</button>`}</div>
-      ${ui.medFor === d.id ? medForm(d.id) : ""}
-      ${meds.length ? `<div class="list">${meds.map(m => medRow(m)).join("")}</div>` : ui.medFor === d.id ? "" : `<div class="hint" style="margin:0">${T("noMeds")}</div>`}</div>
   </div>`;
 }
+// One dog's medicines (on Dogs → Health).
+function medsCard(d) {
+  const meds = S.dog_meds.filter(m => m.dog_id === d.id);
+  return `<div class="card dog-meds"><div class="sec-head"><span class="eyebrow">${esc(d.name)}</span>${ui.medFor === d.id ? "" : `<button class="btn ghost small" data-act="med-add" data-id="${esc(d.id)}">+ ${T("addMed")}</button>`}</div>
+    ${ui.medFor === d.id ? medForm(d.id) : ""}
+    ${meds.length ? `<div class="list">${meds.map(m => medRow(m)).join("")}</div>` : ui.medFor === d.id ? "" : `<div class="hint" style="margin:0">${T("noMeds")}</div>`}</div>`;
+}
+// Dogs: Today (buttons, weather, log, care routines) · Food · Health (medicines, vet, papers) · Pack (profiles).
 function viewDogs() {
-  const care = routines().filter(c => c.dog), dogTodos = todos().filter(t => t.dog && !t.done);
-  const vet = upcoming(999).filter(e => e.cat === "dogs").slice(0, 6), log = todaysLog();
-  return `
+  const bar = subBar("dogs");
+  if (sub.dogs === "food") return `${bar}
+  <section class="sec"><div class="sec-head"><h2>${T("suppliesH")}</h2>${ui.supEdit === "new" ? "" : `<button class="btn small" data-act="sup-add">+ ${T("add")}</button>`}</div>
+    <div class="card list">${ui.supEdit === "new" ? supplyForm() : ""}
+      ${S.dog_supplies.length ? S.dog_supplies.map(supplyRow).join("") : ui.supEdit === "new" ? "" : `<div class="empty">${T("noSupplies")}</div>`}</div></section>`;
+  if (sub.dogs === "health") {
+    const vet = upcoming(999).filter(e => e.cat === "dogs").slice(0, 6);
+    return `${bar}
+  <section class="sec"><h2>${T("medicines")}</h2>${S.dogs.length ? `<div class="dogs">${S.dogs.map(medsCard).join("")}</div>` : `<div class="card"><div class="empty">${T("noDogs")}</div></div>`}</section>
+  <section class="sec"><div class="sec-head"><h2>${T("vet")}</h2><a class="link" href="#calendar">${T("addInCal")}</a></div>
+    <div class="card list">${vet.length ? vet.map(eventRow).join("") : `<div class="empty">${T("noVet")}</div>`}</div></section>
+  ${papersSection("dogs", S.papers.filter(p => p.dog_id).sort(byExpiry), T("dogPapersH"), T("noDogPapers"))}`;
+  }
+  if (sub.dogs === "pack") return `${bar}
+  <section class="sec"><div class="sec-head"><h2>${T("pack")}</h2><button class="btn small" data-act="dog-edit" data-id="">${T("addDog")}</button></div>
+    ${S.dogs.length ? `<div class="dogs">${S.dogs.map(dogCard).join("")}</div>` : `<div class="card"><div class="empty">${T("noDogs")}</div></div>`}</section>`;
+  const care = routines().filter(c => c.dog), dogTodos = todos().filter(t => t.dog && !t.done), log = todaysLog();
+  return `${bar}
   ${dogButtons()}
   ${weatherCard()}
   <section class="sec"><h2>${T("todayLbl2")}</h2>
     <div class="card list">${log.length ? log.map(l => `<div class="row"><span class="log-ic">${LOG_ICON[l.kind] || ""}</span>
       <div class="main"><div class="t">${esc(l.kind === "med" ? `${dogName(l.dog_id)}: ${l.detail}` : T(l.kind === "walk" ? "logWalk" : "logFood"))} · ${hhmm(l.at)}</div><div class="s">${esc(who(l.by_user))}</div></div>${delBtn("dog_log", l.id)}</div>`).join("")
       : `<div class="empty">${T("noLogToday")}</div>`}</div></section>
-  <section class="sec"><div class="sec-head"><h2>${T("pack")}</h2><button class="btn small" data-act="dog-edit" data-id="">${T("addDog")}</button></div>
-    ${S.dogs.length ? `<div class="dogs">${S.dogs.map(dogCard).join("")}</div>` : `<div class="card"><div class="empty">${T("noDogs")}</div></div>`}</section>
-  <section class="sec"><div class="sec-head"><h2>${T("suppliesH")}</h2>${ui.supEdit === "new" ? "" : `<button class="btn small" data-act="sup-add">+ ${T("add")}</button>`}</div>
-    <div class="card list">${ui.supEdit === "new" ? supplyForm() : ""}
-      ${S.dog_supplies.length ? S.dog_supplies.map(supplyRow).join("") : ui.supEdit === "new" ? "" : `<div class="empty">${T("noSupplies")}</div>`}</div></section>
   <section class="sec"><div class="sec-head"><h2>${T("care")}</h2><a class="link" href="#chores">${T("addInChores")}</a></div>
     <div class="card list">${care.length ? care.map(c => routineRow(c)).join("") : `<div class="empty">${T("noCare")}</div>`}
-    ${dogTodos.map(todoRow).join("")}</div></section>
-  <section class="sec"><div class="sec-head"><h2>${T("vet")}</h2><a class="link" href="#calendar">${T("addInCal")}</a></div>
-    <div class="card list">${vet.length ? vet.map(eventRow).join("") : `<div class="empty">${T("noVet")}</div>`}</div></section>
-  ${papersSection("dogs", S.papers.filter(p => p.dog_id).sort(byExpiry), T("dogPapersH"), T("noDogPapers"))}`;
+    ${dogTodos.map(todoRow).join("")}</div></section>`;
 }
 function logDogs(kind) {
   save({ t: "dog_log", kind: "insert", values: { id: uuid(), kind }, notify: [kind, ""] }, kind === "walk" ? "walkLogged" : "foodLogged");
@@ -1143,21 +1154,42 @@ function statsCard() {
       <div class="s">${[...STAT_KINDS.map(([k, ic], j) => x.counts[j] ? `${ic} ${x.counts[j]} ${T("statLbl")[k]}` : ""), x.paid ? `💶 ${money(x.paid)}` : ""].filter(Boolean).map(esc).join(" · ") || "—"}</div>
     </div></div>`).join("")}</div></div>`;
 }
+// Home: Spending · Papers · Info · Activity (who did what).
 function viewHome() {
-  return `
+  const bar = subBar("home");
+  if (sub.home === "money") return bar + viewMoney();
+  if (sub.home === "papers") return `${bar}
   ${papersSection("home", S.papers.filter(p => !p.dog_id).sort(byExpiry), T("papersH"), T("noPapers"))}
-  <p class="hint">${T("papersHint")}</p>
+  <p class="hint">${T("papersHint")}</p>`;
+  if (sub.home === "who") return `${bar}
+  <section class="sec"><h2>${T("whoH")}</h2>${statsCard()}<p class="hint">${T("statsHint")}</p></section>`;
+  return `${bar}
   <section class="sec"><h2>${T("infoH")}</h2>
     <div class="card list">${S.home_info.length ? S.home_info.map(infoRow).join("") : `<div class="empty">${T("noInfo")}</div>`}</div>
     <form class="addbar" id="fInfo" style="margin-top:10px">
       <input type="text" id="inLabel" placeholder="${esc(T("infoLabel"))}" aria-label="${esc(T("infoLabel"))}" required maxlength="40" autocomplete="off">
       <input type="text" id="inValue" class="grow" placeholder="${esc(T("infoValue"))}" aria-label="${esc(T("infoValue"))}" maxlength="200" autocomplete="off">
       <button class="btn">${T("add")}</button>
-    </form></section>
-  <section class="sec"><h2>${T("whoH")}</h2>${statsCard()}<p class="hint">${T("statsHint")}</p></section>`;
+    </form></section>`;
 }
 
-const VIEWS = { today: viewToday, groceries: viewShopping, money: viewMoney, chores: viewChores, calendar: viewCalendar, dogs: viewDogs, home: viewHome };
+// ---------- tabs and their sections ----------
+// Five tabs; Agenda, Dogs and Home have sections picked with a switch at the top (remembered on this phone).
+// The old addresses (#chores, #calendar, #money… used by links and notifications) open the right section.
+const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "who"] };
+const ALIAS = { chores: ["agenda", "chores"], calendar: ["agenda", "calendar"], money: ["home", "money"], walks: ["dogs", "dogtoday"], food: ["dogs", "food"], health: ["dogs", "health"], pack: ["dogs", "pack"],
+  papers: ["home", "papers"], info: ["home", "info"], who: ["home", "who"] };
+const sub = {};
+for (const t in SUBS) { let s = null; try { s = localStorage.getItem("ht-sub-" + t); } catch (e) {} sub[t] = SUBS[t].includes(s) ? s : SUBS[t][0]; }
+function setSub(t, s) {
+  if (!SUBS[t]?.includes(s)) return;
+  sub[t] = s; try { localStorage.setItem("ht-sub-" + t, s); } catch (e) {}
+  if (s === "who") ui.stats = null; // fresh counts each time
+}
+const subBar = t => `<div class="seg" role="tablist">${SUBS[t].map(s => `<button type="button" role="tab" data-act="sub" data-t="${t}" data-v="${s}" aria-pressed="${sub[t] === s}" aria-selected="${sub[t] === s}">${esc(T("subs")[s])}${s === "chores" && dueNow().length ? ` <span class="count">${dueNow().length}</span>` : ""}</button>`).join("")}</div>`;
+const viewAgenda = () => subBar("agenda") + (sub.agenda === "calendar" ? viewCalendar() : viewChores());
+
+const VIEWS = { today: viewToday, groceries: viewShopping, agenda: viewAgenda, dogs: viewDogs, home: viewHome };
 
 // ---------- settings sheet ----------
 async function pushState() {
@@ -1356,7 +1388,10 @@ function render() {
   Object.entries(drafts).forEach(([id, v]) => { const el = document.getElementById(id); if (!el || id === "eDate") return; if (el.type === "checkbox") el.checked = v; else if (v !== "") el.value = v; });
   if (focusId) { const el = document.getElementById(focusId); if (el && el.closest("#view")) el.focus(); }
 }
-function setTab(t) { tab = VIEWS[t] ? t : "today"; pendingDelete = null; if (tab === "home") ui.stats = null; render(); window.scrollTo(0, 0); }
+function setTab(t) {
+  if (ALIAS[t]) { setSub(...ALIAS[t]); t = ALIAS[t][0]; }
+  tab = VIEWS[t] ? t : "today"; pendingDelete = null; if (tab === "home") ui.stats = null; render(); window.scrollTo(0, 0);
+}
 window.addEventListener("hashchange", () => setTab(location.hash.slice(1)));
 window.addEventListener("online", renderChrome); window.addEventListener("offline", renderChrome);
 
@@ -1478,6 +1513,7 @@ document.addEventListener("click", async ev => {
       return;
     }
     case "hmon": ui.homeMonth = shiftMonth(ui.homeMonth, Number(b.dataset.n)); render(); return;
+    case "sub": setSub(b.dataset.t, b.dataset.v); render(); window.scrollTo(0, 0); return;
     case "mgo": {
       ui.moneyMonth = b.dataset.m;
       const xd = $("#xDate"); if (xd) xd.value = ui.moneyMonth === today().slice(0, 7) ? today() : ui.moneyMonth + "-01"; // render() keeps typed values
