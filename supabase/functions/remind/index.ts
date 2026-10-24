@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
       body: `${TEXT[lang][e.remind as "day" | "hour"]}: ${e.title}${e.time ? ` ${e.time}` : ""}`,
       tag: `remind-${e.id}`,
       url: "./#calendar",
-    }));
+    }), { topic: "reminders" });
   }
   // Budgets: tell both phones when a category reaches 80% and when it goes over, once each per month.
   // Only shared spending counts ("only me" expenses stay private).
@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
       sent += await sendToHousehold(admin, b.household_id, (lang) => {
         const t = BUDGET[lang], cat = t.cats[b.cat] ?? b.cat;
         return { title: t.title, body: (level === 100 ? t.over : t.near)(cat, euros(lang, s), euros(lang, limit)), tag: `budget-${b.cat}`, url: "./#money" };
-      });
+      }, { topic: "budget" });
     }
   }
 
@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
       body: MED[lang].body(dog, `${m.name}${m.dose ? ` (${m.dose})` : ""}`) + (m.stock != null && m.stock <= 2 ? MED[lang].low(m.stock) : ""),
       tag: `med-${m.id}`,
       url: "./#dogs",
-    }));
+    }), { topic: "meds_due" });
   }
 
   // Rain: when the next hour turns wet after a dry one (07:00–21:00), tell whoever turned on rain alerts,

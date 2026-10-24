@@ -80,10 +80,10 @@ const configured = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR-PROJECT"
 const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
 // ---------- state ----------
-const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], home: null };
+const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], dog_weights: [], notes: [], home: null };
 let me = null, hid = null, channel = null, online = true;
 let tab = "today", calMonth = today().slice(0, 7), calSel = today(), pendingDelete = null;
-const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null };
+const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null, fixedEdit: null, noteEdit: null };
 try {
   const g = localStorage.getItem("ht-grocCat"); if (GROC_KEYS.includes(g)) ui.grocCat = g;
   const s = localStorage.getItem("ht-shopView"); if (SHOP_VIEWS.includes(s)) ui.shopView = s;
@@ -128,8 +128,10 @@ const DEFAULTS = {
   papers: { dog_id: null, expires_on: null, remind_days: 14, notes: "", reminded: 0 },
   home_info: { value: "" },
   chore_log: { chore_id: null, title: "" },
-  expenses: { cat: "other", note: "", store: "", private: false, trip_id: null, need_id: null, fixed_id: null },
-  fixed_costs: { cat: "bills", private: false, active: true }
+  expenses: { cat: "other", note: "", store: "", private: false, trip_id: null, need_id: null, fixed_id: null, event_id: null },
+  fixed_costs: { cat: "bills", private: false, active: true, every_months: 1, remind_days: 3, reminded_for: null, last_month: null },
+  dog_weights: {},
+  notes: { title: "", body: "", pinned: false }
 };
 function applyOp(op) {
   const list = S[op.t];
@@ -187,7 +189,7 @@ const TABLES = {
   chores: () => sb.from("chores").select("*").order("created_at"),
   events: () => sb.from("events").select("*").order("date"),
   dogs: () => sb.from("dogs").select("*").order("created_at"),
-  members: () => sb.from("members").select("user_id, display_name, lang, rain_alerts, created_at").order("created_at"),
+  members: () => sb.from("members").select("user_id, display_name, lang, rain_alerts, notify_off, created_at").order("created_at"),
   needs: () => sb.from("needs").select("*").order("created_at"),
   shopping_trips: () => sb.from("shopping_trips").select("*").order("created_at", { ascending: false }),
   attachments: () => sb.from("attachments").select("*").order("created_at"),
@@ -202,6 +204,8 @@ const TABLES = {
   home_info: () => sb.from("home_info").select("*").order("created_at"),
   // This month's chores done (to undo a ticked to-do); the monthly counts come from home_stats.
   chore_log: () => sb.from("chore_log").select("*").gte("at", today().slice(0, 7) + "-01").order("at", { ascending: false }),
+  dog_weights: () => sb.from("dog_weights").select("*").order("on_date").order("created_at"),
+  notes: () => sb.from("notes").select("*").order("updated_at", { ascending: false }),
   history: () => sb.from("grocery_history").select("name_key, name, cat, store, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
 };
 async function load(name) {
@@ -242,7 +246,7 @@ const reloadSoon = {};
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("home-" + hid);
-  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log"].forEach(t => {
+  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes"].forEach(t => {
     channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `household_id=eq.${hid}` }, () => {
       clearTimeout(reloadSoon[t]); reloadSoon[t] = setTimeout(() => load(t), 150);
     });
@@ -419,6 +423,29 @@ const knownStores = () => {
 };
 // The shop used last time for this item, if any.
 const rememberedStore = name => S.history.find(h => h.name_key === name.trim().toLowerCase())?.store || "";
+// Things bought at a steady pace (on 3+ shopping days): suggested once that many days have passed again.
+// Not after 3× the usual gap, when it has probably stopped being bought.
+function probablyNeeded(onList) {
+  const seen = new Map();
+  for (const t of S.shopping_trips) {
+    const day = ymd(new Date(t.created_at));
+    for (const it of t.items || []) {
+      const k = (it.name || "").trim().toLowerCase(); if (!k) continue;
+      if (!seen.has(k)) seen.set(k, { name: it.name.trim(), cat: it.cat, days: new Set() });
+      seen.get(k).days.add(day);
+    }
+  }
+  const out = [];
+  for (const [k, x] of seen) {
+    if (onList.has(k) || x.days.size < 3) continue;
+    const days = [...x.days].sort(), last = days[days.length - 1];
+    const every = diffDays(last, days[0]) / (days.length - 1), since = diffDays(today(), last);
+    if (every < 1 || since < Math.round(every) || since > every * 3) continue;
+    const h = S.history.find(y => y.name_key === k);
+    out.push({ name: h?.name || x.name, cat: h?.cat || x.cat || "other", store: h?.store || "", every: Math.round(every), score: since / every });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, 8);
+}
 
 function viewGroceries() {
   const all = S.groceries.filter(g => !g.done), done = S.groceries.filter(g => g.done), f = ui.shopFilter;
@@ -427,7 +454,8 @@ function viewGroceries() {
   const shops = [...new Set(all.map(g => g.store).filter(Boolean).concat(f ? [f] : []))].filter((x, i, a) => a.findIndex(y => sameStore(x, y)) === i).sort((a, b) => a.localeCompare(b));
   const groups = GROC_KEYS.map(k => [k, open.filter(g => (GROC_KEYS.includes(g.cat) ? g.cat : "other") === k)]).filter(g => g[1].length);
   const onList = new Set(all.map(g => g.name.trim().toLowerCase()));
-  const often = S.history.filter(h => h.uses >= 2 && !onList.has(h.name_key)).slice(0, 10);
+  const soon = probablyNeeded(onList), soonKeys = new Set(soon.map(x => x.name.trim().toLowerCase()));
+  const often = S.history.filter(h => h.uses >= 2 && !onList.has(h.name_key) && !soonKeys.has(h.name_key)).slice(0, 10);
   const row = g => `<div class="row ${g.done ? "done" : ""}">
       <button class="check ${g.done ? "on" : ""}" data-act="groc" data-id="${esc(g.id)}" aria-label="${g.done ? T("putBack") : T("markBought")}">${g.done ? IC.tick : ""}</button>
       <div class="main"><div class="t">${esc(g.name)}${g.qty ? ` <span class="chip">${esc(g.qty)}</span>` : ""}</div>
@@ -447,6 +475,8 @@ function viewGroceries() {
     <button class="chip-btn" data-act="shop-filter" data-v="" aria-pressed="${!f}">${T("allShops")}</button>
     ${shops.map(x => `<button class="chip-btn" data-act="shop-filter" data-v="${esc(x)}" aria-pressed="${sameStore(x, f)}">${esc(x)}</button>`).join("")}</div>` : ""}
   ${hidden ? `<p class="hint" style="margin:6px 2px 0">${esc(T("otherShops")(hidden))} <button class="who" data-act="shop-filter" data-v="">${T("showAll")}</button></p>` : ""}
+  ${soon.length ? `<div class="often"><span class="eyebrow">${T("dueAgain")}</span>
+    ${soon.map(h => `<button class="chip-btn" data-act="often" data-name="${esc(h.name)}" data-cat="${esc(h.cat)}" data-store="${esc(h.store)}">+ ${esc(h.name)} <small>${esc(T("buyEvery")(h.every))}</small></button>`).join("")}</div>` : ""}
   ${often.length ? `<div class="often"><span class="eyebrow">${T("often")}</span>
     ${often.map(h => `<button class="chip-btn" data-act="often" data-name="${esc(h.name)}" data-cat="${esc(h.cat)}" data-store="${esc(h.store || "")}">+ ${esc(h.name)}${h.store ? ` <small>${esc(h.store)}</small>` : ""}</button>`).join("")}</div>` : ""}
   ${groups.length ? groups.map(([k, items]) => `<section class="sec"><span class="eyebrow">${esc(T("grocCats")[k])}</span><div class="card list">${items.map(row).join("")}</div></section>`).join("")
@@ -749,11 +779,14 @@ function viewDogs() {
     <div class="card list">${ui.supEdit === "new" ? supplyForm() : ""}
       ${S.dog_supplies.length ? S.dog_supplies.map(supplyRow).join("") : ui.supEdit === "new" ? "" : `<div class="empty">${T("noSupplies")}</div>`}</div></section>`;
   if (sub.dogs === "health") {
-    const vet = upcoming(999).filter(e => e.cat === "dogs").slice(0, 6);
+    const vet = upcoming(999).filter(e => e.cat === "dogs").slice(0, 6), past = pastVisits();
     return `${bar}
   <section class="sec"><h2>${T("medicines")}</h2>${S.dogs.length ? `<div class="dogs">${S.dogs.map(medsCard).join("")}</div>` : `<div class="card"><div class="empty">${T("noDogs")}</div></div>`}</section>
   <section class="sec"><div class="sec-head"><h2>${T("vet")}</h2><a class="link" href="#calendar">${T("addInCal")}</a></div>
     <div class="card list">${vet.length ? vet.map(eventRow).join("") : `<div class="empty">${T("noVet")}</div>`}</div></section>
+  ${past.length ? `<section class="sec"><div class="sec-head"><h2>${T("vetPast")}</h2><span class="eyebrow">${T("vetPastHint")}</span></div>
+    <div class="card list">${past.map(visitRow).join("")}</div></section>` : ""}
+  ${S.dogs.length ? `<section class="sec"><h2>${T("weightH")}</h2><div class="dogs">${S.dogs.map(weightCard).join("")}</div></section>` : ""}
   ${papersSection("dogs", S.papers.filter(p => p.dog_id).sort(byExpiry), T("dogPapersH"), T("noDogPapers"))}`;
   }
   if (sub.dogs === "pack") return `${bar}
@@ -771,6 +804,65 @@ function viewDogs() {
     <div class="card list">${care.length ? care.map(c => routineRow(c)).join("") : `<div class="empty">${T("noCare")}</div>`}
     ${dogTodos.map(todoRow).join("")}</div></section>`;
 }
+// Dog appointments of the last 6 months (one-off calendar events in "Dogs"), with what they cost.
+const pastVisits = () => S.events.filter(e => e.cat === "dogs" && !e.repeat && e.date <= today() && e.date >= addDays(today(), -183))
+  .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+function visitRow(e) {
+  const d = parse(e.date), paid = S.expenses.filter(x => x.event_id === e.id);
+  return `<div class="row"><div class="when"><b>${d.getDate()}</b><span>${esc(mon3(d.getMonth()))}</span></div>
+    <div class="main"><div class="t">${esc(e.title)}</div><div class="s">${esc(fmtDate(e.date))}</div></div>
+    ${paid.length ? `<b class="amt">${esc(money(sumOf(paid)))}</b>` : `<button class="btn ghost small" data-act="vet-cost" data-id="${esc(e.id)}">💶 ${T("addCost")}</button>`}</div>`;
+}
+function vetCost(id) {
+  const e = find(S.events, id); if (!e) return;
+  const ans = prompt(T("vetCostPrompt")(e.title), ""); if (ans === null || !ans.trim()) return;
+  const amount = parseAmount(ans); if (amount === null) { toast("badAmount"); return; }
+  addExpense({ amount, cat: "dogs", note: e.title, spent_on: e.date, event_id: e.id }, "costAdded");
+}
+
+// Weight over time: a line per dog (thin, pine, dots ringed with the surface), first and last values labelled.
+const weightsOf = id => S.dog_weights.filter(w => w.dog_id === id).sort((a, b) => a.on_date.localeCompare(b.on_date) || (a.created_at || "").localeCompare(b.created_at || ""));
+function weightChart(list) {
+  const W = 300, H = 120, L = 8, R = 8, top = 22, bottom = 22;
+  const t0 = parse(list[0].on_date).getTime(), t1 = parse(list[list.length - 1].on_date).getTime();
+  const kgs = list.map(w => Number(w.kg)), lo = Math.min(...kgs), hi = Math.max(...kgs), pad_ = Math.max(0.5, (hi - lo) * 0.15);
+  const x = w => t1 > t0 ? L + (parse(w.on_date).getTime() - t0) / (t1 - t0) * (W - L - R) : W / 2;
+  const y = kg => top + (1 - (kg - (lo - pad_)) / (hi - lo + 2 * pad_)) * (H - top - bottom);
+  const pts = list.map(w => [x(w), y(Number(w.kg)), w]);
+  const first = pts[0], last = pts[pts.length - 1];
+  const label = ([px, py, w], anchor) => `<text x="${px.toFixed(1)}" y="${(py - 9).toFixed(1)}" text-anchor="${anchor}" class="wv">${esc(numFmt(w.kg))}</text>`;
+  return `<svg class="wchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(T("weightAria")(numFmt(first[2].kg), numFmt(last[2].kg), fmtDate(first[2].on_date), fmtDate(last[2].on_date)))}">
+    <line x1="${L}" x2="${W - R}" y1="${H - bottom + 4}" y2="${H - bottom + 4}" class="base"/>
+    <polyline points="${pts.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ")}" class="ln"/>
+    ${pts.map(([px, py, w]) => `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4" class="pt"><title>${esc(fmtDate(w.on_date))}: ${esc(numFmt(w.kg))} kg</title></circle>`).join("")}
+    ${label(first, "start")}${pts.length > 1 ? label(last, "end") : ""}
+    <text x="${L}" y="${H - 4}" class="wd">${esc(fmtDate(first[2].on_date))}</text>
+    ${pts.length > 1 ? `<text x="${W - R}" y="${H - 4}" text-anchor="end" class="wd">${esc(fmtDate(last[2].on_date))}</text>` : ""}
+  </svg>`;
+}
+function weightCard(d) {
+  const list = weightsOf(d.id), last = list[list.length - 1], prev = list[list.length - 2];
+  const change = last && prev ? Math.round((last.kg - prev.kg) * 100) / 100 : null;
+  return `<div class="card weight-card"><div class="sec-head"><span class="eyebrow">${esc(d.name)}</span>
+      ${last ? `<span><b class="wnow">${esc(numFmt(last.kg))} kg</b>${change !== null ? ` <span class="s">${esc(T("weightChange")(change, diffDays(last.on_date, prev.on_date)))}</span>` : ""}</span>` : ""}</div>
+    ${list.length > 1 ? weightChart(list.slice(-24)) : `<div class="hint" style="margin:0">${T(list.length ? "oneWeight" : "noWeights")}</div>`}
+    ${list.length ? `<details class="more-cats"><summary class="link">${T("weightList")(list.length)}</summary><div class="list">${list.slice().reverse().map(w => `<div class="row"><div class="main"><div class="t">${esc(numFmt(w.kg))} kg</div><div class="s">${esc(fmtDate(w.on_date))}${w.by_user ? " · " + esc(who(w.by_user)) : ""}</div></div>${delBtn("dog_weights", w.id)}</div>`).join("")}</div></details>` : ""}
+    <form class="addbar" id="fWeight-${esc(d.id)}" data-dog="${esc(d.id)}">
+      <input type="text" id="wKg-${esc(d.id)}" inputmode="decimal" placeholder="kg" aria-label="${esc(T("weightKg")(d.name))}" required autocomplete="off" style="flex:1 1 70px">
+      <input type="date" id="wDate-${esc(d.id)}" value="${today()}" max="${today()}" required aria-label="${esc(T("dateLbl"))}">
+      <button class="btn small">${T("add")}</button>
+    </form></div>`;
+}
+function saveWeight(f) {
+  const dog = f.dataset.dog, kg = parseNum($("#wKg-" + dog)?.value), on_date = $("#wDate-" + dog)?.value || today();
+  if (kg === null || kg >= 200) { toast("badAmount"); return; }
+  $("#wKg-" + dog).value = "";
+  const latest = weightsOf(dog).pop();
+  save({ t: "dog_weights", kind: "insert", values: { id: uuid(), dog_id: dog, kg: Math.round(kg * 100) / 100, on_date } }, "saved");
+  // The profile shows the latest weight.
+  if (!latest || on_date >= latest.on_date) save({ t: "dogs", kind: "update", id: dog, values: { weight: `${numFmt(kg)} kg` } });
+}
+
 function logDogs(kind) {
   save({ t: "dog_log", kind: "insert", values: { id: uuid(), kind }, notify: [kind, ""] }, kind === "walk" ? "walkLogged" : "foodLogged");
 }
@@ -884,11 +976,63 @@ function expRow(e) {
     <div class="main"><div class="t">${esc(title)}${onlyMeChip(e)}</div><div class="s">${sub}</div></div>
     <b class="amt">${esc(money(e.amount))}</b>${clipBtn("expense", e.id, title)}${delBtn("expenses", e.id)}</div>`;
 }
+// Fixed costs are charged every every_months months from start_month; the daily function adds each charge
+// as an expense on its day, and mentions it remind_days before in the morning notification.
+const EVERY_M = [1, 2, 3, 6, 12], BILL_REMIND = [0, 1, 3, 7];
+const monthsFrom = (a, b) => (Number(b.slice(0, 4)) - Number(a.slice(0, 4))) * 12 + Number(b.slice(5, 7)) - Number(a.slice(5, 7));
+const chargedIn = (c, m) => { const n = monthsFrom(c.start_month || today(), m); return n >= 0 && n % (c.every_months || 1) === 0; };
+function nextCharge(c) {
+  for (let i = 0, m = today().slice(0, 7); i < 36; i++, m = shiftMonth(m, 1)) {
+    if (chargedIn(c, m) && !(c.last_month && c.last_month.slice(0, 7) >= m)) return dayIn(m, c.day);
+  }
+  return null;
+}
 function fixedRow(c) {
-  const sub = [T("dayN")(c.day), T("expCats")[expCat(c.cat)], c.paid_by ? T("paidBy")(who(c.paid_by)) : ""].filter(Boolean).map(esc).join(" · ");
+  if (ui.fixedEdit === c.id) return fixedForm(c);
+  const next = nextCharge(c), every = c.every_months || 1;
+  const sub = [every > 1 ? T("everyMonths")[every] : T("dayN")(c.day), next ? T("nextOn")(fmtDate(next)) : "", T("expCats")[expCat(c.cat)], c.paid_by ? T("paidBy")(who(c.paid_by)) : ""]
+    .filter(Boolean).map(esc).join(" · ");
   return `<div class="row"><span class="dot" style="background:var(${EXP_COLORS[expCat(c.cat)]})"></span>
-    <div class="main"><div class="t">${esc(c.name)}${onlyMeChip(c)}</div><div class="s">${sub}</div></div>
-    <b class="amt">${esc(money(c.amount))}</b>${delBtn("fixed_costs", c.id)}</div>`;
+    <div class="main"><div class="t">${esc(c.name)}${onlyMeChip(c)}</div><div class="s">${sub}${c.remind_days ? ` · <span title="${esc(T("daysBefore")(c.remind_days))}" aria-label="${esc(T("daysBefore")(c.remind_days))}">${IC.bell}</span>` : ""}</div></div>
+    <b class="amt">${esc(money(c.amount))}</b><button class="btn ghost small" data-act="fixed-edit" data-id="${esc(c.id)}">${T("editDog")}</button></div>`;
+}
+// The add form (p = "fx", at the bottom) or the edit form in place of a row (p = "fe").
+function fixedForm(c = {}) {
+  const p = c.id ? "fe" : "fx", next = c.id ? nextCharge(c) : null, cur = today().slice(0, 7);
+  return `<form class="${c.id ? "row edit-row" : "addbar"}" id="${c.id ? "fFixedEdit" : "fFixed"}" data-id="${esc(c.id || "")}"${c.id ? "" : ' style="margin-top:10px"'}>
+      <input type="text" id="${p}Name" class="grow" value="${esc(c.name || "")}" placeholder="${esc(T("fixedName"))}" aria-label="${esc(T("fixedName"))}" required autocomplete="off">
+      <input type="text" id="${p}Amount" inputmode="decimal" value="${c.id ? esc(String(Number(c.amount)).replace(".", lang === "es" ? "," : ".")) : ""}" placeholder="${esc(T("amount"))}" aria-label="${esc(T("amount"))}" required style="flex:1 1 90px">
+      <label class="inline"><span>${T("onDay")}</span><input type="number" id="${p}Day" min="1" max="31" value="${c.day || Number(today().slice(8))}" required style="width:64px"></label>
+      <label class="inline"><span>${T("fxEvery")}</span><select id="${p}Every">${EVERY_M.map(n => `<option value="${n}" ${n === (c.every_months || 1) ? "selected" : ""}>${esc(T("everyMonths")[n])}</option>`).join("")}</select></label>
+      <label class="inline"><span>${T(c.id ? "fxNext" : "fxFirst")}</span><input type="month" id="${p}Start" min="${cur}" value="${esc((next || "").slice(0, 7) || cur)}" required></label>
+      <label class="inline"><span>${T("paperRemind")}</span><select id="${p}Remind">${BILL_REMIND.map(n => `<option value="${n}" ${n === (c.remind_days ?? 3) ? "selected" : ""}>${esc(n ? T("daysBefore")(n) : T("noReminder"))}</option>`).join("")}</select></label>
+      <select id="${p}Cat" aria-label="${esc(T("category"))}">${catOptions(c.cat || "bills")}</select>
+      <select id="${p}Paid" aria-label="${esc(T("paidByLbl"))}">${payerOptions(c.paid_by || me)}</select>
+      <label class="toggle"><input type="checkbox" id="${p}Private" ${c.private ? "checked" : ""}> ${T("onlyMe")}</label>
+      ${c.id ? formButtons("fixed_costs", c.id, "fixed-cancel") : `<button class="btn">${T("add")}</button>`}
+    </form>`;
+}
+function saveFixed(f) {
+  const p = f.id === "fFixedEdit" ? "fe" : "fx", v = id => ($("#" + p + id)?.value || "").trim();
+  const amount = parseAmount(v("Amount")), day = Math.min(31, Math.max(1, parseInt(v("Day"), 10) || 1)), name = v("Name");
+  if (!name) return; if (amount === null) { toast("badAmount"); return; }
+  const cur = today().slice(0, 7), start = /^\d{4}-\d{2}$/.test(v("Start")) && v("Start") > cur ? v("Start") : cur;
+  const values = { name, amount, day, cat: v("Cat"), paid_by: v("Paid") || me, private: $("#" + p + "Private").checked,
+    every_months: Number(v("Every")) || 1, remind_days: Number(v("Remind")), start_month: start + "-01" };
+  const old = f.dataset.id && find(S.fixed_costs, f.dataset.id);
+  if (old) {
+    // A different day or pace: remind again. (Months before start_month are never charged.)
+    if (day !== old.day || values.every_months !== old.every_months || values.start_month !== old.start_month) values.reminded_for = null;
+    ui.fixedEdit = null;
+    save({ t: "fixed_costs", kind: "update", id: old.id, values }, "saved"); return;
+  }
+  // First charge this month and its day has passed: it goes into this month's spending now.
+  const id = uuid(), now = start === cur && dayIn(cur, day) <= today();
+  values.last_month = now ? cur + "-01" : null;
+  ["fxName", "fxAmount"].forEach(i => $("#" + i).value = "");
+  save({ t: "fixed_costs", kind: "insert", values: { id, ...values } }, "fixedAdded").then(() => {
+    if (now) addExpense({ amount, cat: values.cat, spent_on: dayIn(cur, day), paid_by: values.paid_by, note: name, private: values.private, fixed_id: id }, null);
+  });
 }
 function viewMoney() {
   const m = ui.moneyMonth, list = monthExp(m).sort((a, b) => b.spent_on.localeCompare(a.spent_on) || (b.created_at || "").localeCompare(a.created_at || ""));
@@ -941,16 +1085,8 @@ function viewMoney() {
     <div class="card list">${list.length ? list.map(expRow).join("") : `<div class="empty">${T("noSpending")}</div>`}</div></section>
   <section class="sec"><div class="sec-head"><h2>${T("fixedH")}</h2><span class="eyebrow">${T("fixedHint")}</span></div>
     <div class="card list">${fixed.length ? fixed.map(fixedRow).join("") : `<div class="empty">${T("noFixed")}</div>`}</div>
-    <form class="addbar" id="fFixed" style="margin-top:10px">
-      <input type="text" id="fxName" class="grow" placeholder="${esc(T("fixedName"))}" required autocomplete="off">
-      <input type="text" id="fxAmount" inputmode="decimal" placeholder="${esc(T("amount"))}" required style="flex:1 1 90px">
-      <label class="inline"><span>${T("onDay")}</span><input type="number" id="fxDay" min="1" max="31" value="${Number(today().slice(8))}" required style="width:64px"></label>
-      <select id="fxCat" aria-label="${esc(T("category"))}">${catOptions("bills")}</select>
-      <select id="fxPaid" aria-label="${esc(T("paidByLbl"))}">${payerOptions(me)}</select>
-      <label class="toggle"><input type="checkbox" id="fxPrivate"> ${T("onlyMe")}</label>
-      <label class="toggle"><input type="checkbox" id="fxNow" checked> ${T("alsoThisMonth")}</label>
-      <button class="btn">${T("add")}</button>
-    </form></section>
+    ${fixedForm()}
+    <p class="hint">${T("fixedFormHint")}</p></section>
   ${yearCard()}
   <section class="sec"><div class="kv"><span class="eyebrow">${T("exportCsv")}</span>
     <div class="kv"><button class="btn ghost small" data-act="csv" data-scope="month">${esc(monthLabel(m))}</button><button class="btn ghost small" data-act="csv" data-scope="year">${m.slice(0, 4)}</button></div></div></section>`;
@@ -1154,10 +1290,61 @@ function statsCard() {
       <div class="s">${[...STAT_KINDS.map(([k, ic], j) => x.counts[j] ? `${ic} ${x.counts[j]} ${T("statLbl")[k]}` : ""), x.paid ? `💶 ${money(x.paid)}` : ""].filter(Boolean).map(esc).join(" · ") || "—"}</div>
     </div></div>`).join("")}</div></div>`;
 }
-// Home: Spending · Papers · Info · Activity (who did what).
+// Shared notes. A line written "[ ] milk" (or "- [ ] milk") is a tick; tapping it writes "[x]".
+const TICK = /^(\s*(?:[-*]\s*)?)\[( |x|X)\](\s?)(.*)$/;
+const noteSort = (a, b) => (b.pinned - a.pinned) || (b.updated_at || "").localeCompare(a.updated_at || "");
+function noteBody(n) {
+  return n.body.split("\n").map((line, i) => {
+    const m = line.match(TICK);
+    if (!m) return line.trim() ? `<p>${esc(line)}</p>` : `<p class="gap"></p>`;
+    const on = m[2] !== " ";
+    return `<button type="button" class="tick ${on ? "on" : ""}" data-act="note-tick" data-id="${esc(n.id)}" data-i="${i}" aria-pressed="${on}">
+      <span class="box">${on ? IC.tick : ""}</span><span class="lbl">${esc(m[4])}</span></button>`;
+  }).join("");
+}
+function noteCard(n) {
+  if (ui.noteEdit === n.id) return noteForm(n);
+  const ticks = n.body.split("\n").filter(l => TICK.test(l)), done = ticks.filter(l => l.match(TICK)[2] !== " ").length;
+  return `<div class="card note-card">
+    <div class="sec-head"><b class="t">${n.pinned ? "📌 " : ""}${esc(n.title || T("untitled"))}</b>
+      <span class="kv">${ticks.length ? `<span class="chip">${done}/${ticks.length}</span>` : ""}<button class="btn ghost small" data-act="note-edit" data-id="${esc(n.id)}">${T("editDog")}</button></span></div>
+    ${n.body.trim() ? `<div class="note-body">${noteBody(n)}</div>` : ""}
+    <div class="s">${esc(T("editedBy")(cap(who(n.updated_by || n.created_by)), fmtDate(ymd(new Date(n.updated_at || n.created_at)))))}</div></div>`;
+}
+function noteForm(n = {}) {
+  return `<form class="card note-form" id="fNote" data-id="${esc(n.id || "")}">
+    <input type="text" id="noTitle" value="${esc(n.title || "")}" placeholder="${esc(T("noteTitle"))}" aria-label="${esc(T("noteTitle"))}" maxlength="80" autocomplete="off">
+    <textarea id="noBody" rows="7" placeholder="${esc(T("noteBodyPh"))}" aria-label="${esc(T("noteBodyLbl"))}">${esc(n.body || "")}</textarea>
+    <label class="toggle"><input type="checkbox" id="noPin" ${n.pinned ? "checked" : ""}> ${T("pinNote")}</label>
+    ${formButtons("notes", n.id, "note-cancel")}
+  </form>`;
+}
+function saveNote(f) {
+  const title = $("#noTitle").value.trim(), body = $("#noBody").value.replace(/\s+$/, "");
+  if (!title && !body) return;
+  const old = f.dataset.id && find(S.notes, f.dataset.id);
+  const values = { title, body, pinned: $("#noPin").checked, updated_by: me, updated_at: new Date().toISOString() };
+  ui.noteEdit = null;
+  save(old ? { t: "notes", kind: "update", id: old.id, values } : { t: "notes", kind: "insert", values: { id: uuid(), ...values }, notify: ["note", title || body.split("\n")[0]] }, "saved");
+}
+function noteTick(id, i) {
+  const n = find(S.notes, id); if (!n) return;
+  const lines = n.body.split("\n"), m = (lines[i] || "").match(TICK); if (!m) return;
+  lines[i] = `${m[1]}[${m[2] === " " ? "x" : " "}]${m[3]}${m[4]}`;
+  save({ t: "notes", kind: "update", id, values: { body: lines.join("\n"), updated_by: me, updated_at: new Date().toISOString() } });
+}
+function viewNotes() {
+  const list = S.notes.slice().sort(noteSort), adding = ui.noteEdit === "new";
+  return `<section class="sec"><div class="sec-head"><h2>${T("notesH")}</h2>${adding ? "" : `<button class="btn small" data-act="note-add">+ ${T("newNote")}</button>`}</div>
+    <div class="notes">${adding ? noteForm() : ""}${list.length ? list.map(noteCard).join("") : adding ? "" : `<div class="card"><div class="empty">${T("noNotes")}</div></div>`}</div>
+    <p class="hint">${T("notesHint")}</p></section>`;
+}
+
+// Home: Spending · Papers · Info · Notes · Activity (who did what).
 function viewHome() {
   const bar = subBar("home");
   if (sub.home === "money") return bar + viewMoney();
+  if (sub.home === "notes") return bar + viewNotes();
   if (sub.home === "papers") return `${bar}
   ${papersSection("home", S.papers.filter(p => !p.dog_id).sort(byExpiry), T("papersH"), T("noPapers"))}
   <p class="hint">${T("papersHint")}</p>`;
@@ -1176,9 +1363,9 @@ function viewHome() {
 // ---------- tabs and their sections ----------
 // Five tabs; Agenda, Dogs and Home have sections picked with a switch at the top (remembered on this phone).
 // The old addresses (#chores, #calendar, #money… used by links and notifications) open the right section.
-const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "who"] };
+const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "notes", "who"] };
 const ALIAS = { chores: ["agenda", "chores"], calendar: ["agenda", "calendar"], money: ["home", "money"], walks: ["dogs", "dogtoday"], food: ["dogs", "food"], health: ["dogs", "health"], pack: ["dogs", "pack"],
-  papers: ["home", "papers"], info: ["home", "info"], who: ["home", "who"] };
+  papers: ["home", "papers"], info: ["home", "info"], notes: ["home", "notes"], who: ["home", "who"] };
 const sub = {};
 for (const t in SUBS) { let s = null; try { s = localStorage.getItem("ht-sub-" + t); } catch (e) {} sub[t] = SUBS[t].includes(s) ? s : SUBS[t][0]; }
 function setSub(t, s) {
@@ -1224,7 +1411,7 @@ async function renderSettings() {
     <div class="card"><b>${T("invite")}</b><p class="hint" style="margin:0">${T("inviteHint")}</p>
       <div class="kv"><span class="code" id="inviteCode">${esc(S.home?.invite_code || "")}</span><button class="btn small" data-act="copy-code">${T("copy")}</button></div></div>
     <div class="card"><b>${T("members")}</b>${S.members.map(m => `<div>${esc(m.display_name || "—")}${m.user_id === me ? ` <span class="chip">${T("you_")}</span>` : ""}</div>`).join("")}</div>
-    <div class="card"><b>${T("notif")}</b>${notifBody}</div>
+    <div class="card"><b>${T("notif")}</b>${notifBody}${st === "on" ? notifPrefs() : ""}</div>
     ${weatherSettings()}
     <div class="card"><b>${T("mantraTitle")}</b>
       <label class="toggle"><input type="checkbox" id="mantraOn" ${mantraOn ? "checked" : ""}> ${T("mantraShow")}</label>
@@ -1241,6 +1428,15 @@ async function renderSettings() {
     <button class="btn ghost" data-act="sign-out">${T("signOut")}</button>
     <p class="hint" style="margin:0;text-align:center">${T("version")} ${esc(running?.version || "dev")}</p>
   </div>`;
+}
+// Which notifications this person gets (members.notify_off; the server skips the topics turned off).
+const NOTIF_TOPICS = [["fromOther", ["list", "shop", "need", "calendar", "chores", "done", "dogs", "med", "note"]], ["remindersSum", ["reminders", "meds_due", "budget", "daily", "weekly"]]];
+function notifPrefs() {
+  const off = S.members.find(m => m.user_id === me)?.notify_off || [];
+  return `<details class="notif-prefs"><summary class="link">${T("notifChoose")}</summary>
+    ${NOTIF_TOPICS.map(([g, list]) => `<span class="eyebrow">${T("notifGroups")[g]}</span>
+      ${list.map(k => `<label class="toggle"><input type="checkbox" class="nt-pref" data-k="${k}" ${off.includes(k) ? "" : "checked"}> ${esc(T("notifTopics")[k])}</label>`).join("")}`).join("")}
+    <p class="hint" style="margin:0">${T("notifPrefsHint")}</p></details>`;
 }
 async function openSettings() { $("#settings").hidden = false; await renderSettings(); }
 function closeSettings() { $("#settings").hidden = true; $("#settings").innerHTML = ""; ui.filesFor = null; ui.places = null; ui.placeEdit = false; }
@@ -1314,7 +1510,7 @@ async function finishShopping() {
 
 // A copy of everything in this home, as a JSON file (the database rules limit it to this home).
 async function exportData() {
-  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "expenses", "fixed_costs", "budgets", "grocery_history"];
+  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "expenses", "fixed_costs", "budgets", "grocery_history"];
   const out = { app: "Home Together", version: running?.version || "dev", exported_at: new Date().toISOString() };
   for (const t of tables) {
     const { data, error } = await sb.from(t).select("*");
@@ -1383,7 +1579,7 @@ function render() {
   const nG = S.groceries.filter(g => !g.done).length, nC = dueNow().length;
   $("#bGroc").hidden = !nG; $("#bGroc").textContent = nG;
   $("#bChores").hidden = !nC; $("#bChores").textContent = nC;
-  const drafts = {}; document.querySelectorAll("#view input:not([type=file]), #view select").forEach(el => { if (el.id) drafts[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+  const drafts = {}; document.querySelectorAll("#view input:not([type=file]), #view select, #view textarea").forEach(el => { if (el.id) drafts[el.id] = el.type === "checkbox" ? el.checked : el.value; });
   $("#view").innerHTML = VIEWS[tab]();
   Object.entries(drafts).forEach(([id, v]) => { const el = document.getElementById(id); if (!el || id === "eDate") return; if (el.type === "checkbox") el.checked = v; else if (v !== "") el.value = v; });
   if (focusId) { const el = document.getElementById(focusId); if (el && el.closest("#view")) el.focus(); }
@@ -1514,6 +1710,13 @@ document.addEventListener("click", async ev => {
     }
     case "hmon": ui.homeMonth = shiftMonth(ui.homeMonth, Number(b.dataset.n)); render(); return;
     case "sub": setSub(b.dataset.t, b.dataset.v); render(); window.scrollTo(0, 0); return;
+    case "fixed-edit": $("#fFixedEdit")?.remove(); ui.fixedEdit = id; render(); $("#feName")?.focus(); return;
+    case "fixed-cancel": ui.fixedEdit = null; render(); return;
+    case "vet-cost": vetCost(id); return;
+    case "note-add": $("#fNote")?.remove(); ui.noteEdit = "new"; render(); $("#noTitle")?.focus(); return;
+    case "note-edit": $("#fNote")?.remove(); ui.noteEdit = id; render(); $("#noBody")?.focus(); return;
+    case "note-cancel": ui.noteEdit = null; render(); return;
+    case "note-tick": noteTick(id, Number(b.dataset.i)); return;
     case "mgo": {
       ui.moneyMonth = b.dataset.m;
       const xd = $("#xDate"); if (xd) xd.value = ui.moneyMonth === today().slice(0, 7) ? today() : ui.moneyMonth + "-01"; // render() keeps typed values
@@ -1587,17 +1790,9 @@ document.addEventListener("submit", async ev => {
     ["xAmount", "xStore", "xNote"].forEach(i => $("#" + i).value = ""); $("#xPrivate").checked = false;
     addExpense(values);
   }
-  if (f.id === "fFixed") {
-    const amount = parseAmount(v("fxAmount")), day = Math.min(31, Math.max(1, parseInt(v("fxDay"), 10) || 1)), name = v("fxName");
-    if (!name) return; if (amount === null) { toast("badAmount"); return; }
-    const month = today().slice(0, 7), now = $("#fxNow").checked, id = uuid();
-    const c = { id, name, amount, day, cat: v("fxCat"), paid_by: v("fxPaid") || me, private: $("#fxPrivate").checked,
-      start_month: (now ? month : shiftMonth(month, 1)) + "-01", last_month: now ? month + "-01" : null };
-    ["fxName", "fxAmount"].forEach(i => $("#" + i).value = "");
-    save({ t: "fixed_costs", kind: "insert", values: c }, "fixedAdded").then(ok => {
-      if (now) addExpense({ amount, cat: c.cat, spent_on: dayIn(month, day), paid_by: c.paid_by, note: name, private: c.private, fixed_id: id }, null);
-    });
-  }
+  if (f.id === "fFixed" || f.id === "fFixedEdit") saveFixed(f);
+  if (f.id === "fNote") saveNote(f);
+  if (f.id.startsWith("fWeight-")) saveWeight(f);
   if (f.id === "fNeed") {
     const title = v("nTitle"); if (!title) return; ui.needCat = v("nCat");
     const values = { id: uuid(), title, cat: ui.needCat, price: v("nPrice"), store: v("nStore"), link: v("nLink"), notes: v("nNotes") };
@@ -1619,6 +1814,11 @@ document.addEventListener("change", ev => {
   if (ev.target.id === "mantraOn") {
     mantraOn = ev.target.checked; try { localStorage.setItem("ht-mantra", mantraOn ? "on" : "off"); } catch (e) {}
     render();
+  }
+  if (ev.target.classList.contains("nt-pref")) {
+    const off = [...document.querySelectorAll(".nt-pref")].filter(x => !x.checked).map(x => x.dataset.k), m = S.members.find(x => x.user_id === me);
+    const before = m?.notify_off || []; if (m) m.notify_off = off;
+    run(sb.from("members").update({ notify_off: off }).eq("user_id", me), "saved").then(ok => { if (!ok && m) { m.notify_off = before; ev.target.checked = !ev.target.checked; } });
   }
   if (ev.target.id === "wxAlerts") {
     const on = ev.target.checked, m = S.members.find(x => x.user_id === me); if (m) m.rain_alerts = on;
