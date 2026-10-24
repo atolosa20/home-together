@@ -12,6 +12,7 @@ const TEXT: Record<Lang, Record<string, (who: string, text: string) => Message>>
     chore_done: (w, t) => ({ title: "Done ✓", body: `${w} did: ${t}`, url: "./#chores" }),
     todo_done: (w, t) => ({ title: "Done ✓", body: `${w} did: ${t}`, url: "./#chores" }),
     need: (w, t) => ({ title: "Needs", body: `${w} added: ${t}`, url: "./#groceries" }),
+    note: (w, t) => ({ title: "Notes", body: `${w} added a note: ${t}`, url: "./#notes" }),
     shop: (w, t) => ({ title: "Shopping done", body: `${w} finished shopping: ${t}`, tag: "groceries", url: "./#groceries" }),
     walk: (w) => ({ title: "Dogs", body: `${w} took the dogs out`, tag: "dogs", url: "./#dogs" }),
     food: (w) => ({ title: "Dogs", body: `${w} fed the dogs`, tag: "dogs", url: "./#dogs" }),
@@ -26,6 +27,7 @@ const TEXT: Record<Lang, Record<string, (who: string, text: string) => Message>>
     chore_done: (w, t) => ({ title: "Hecho ✓", body: `${w} ha hecho: ${t}`, url: "./#chores" }),
     todo_done: (w, t) => ({ title: "Hecho ✓", body: `${w} ha hecho: ${t}`, url: "./#chores" }),
     need: (w, t) => ({ title: "Necesidades", body: `${w} ha añadido: ${t}`, url: "./#groceries" }),
+    note: (w, t) => ({ title: "Notas", body: `${w} ha añadido una nota: ${t}`, url: "./#notes" }),
     shop: (w, t) => ({ title: "Compra hecha", body: `${w} ha terminado la compra: ${t}`, tag: "groceries", url: "./#groceries" }),
     walk: (w) => ({ title: "Perros", body: `${w} ha sacado a los perros`, tag: "dogs", url: "./#dogs" }),
     food: (w) => ({ title: "Perros", body: `${w} ha dado de comer a los perros`, tag: "dogs", url: "./#dogs" }),
@@ -33,6 +35,10 @@ const TEXT: Record<Lang, Record<string, (who: string, text: string) => Message>>
     test: () => ({ title: "Home Together", body: "Las notificaciones funcionan en este móvil.", url: "./" }),
   },
 };
+
+// Which Settings switch each kind belongs to (members.notify_off).
+const TOPIC: Record<string, string> = { grocery: "list", shop: "shop", need: "need", event: "calendar", chore: "chores", todo: "chores",
+  chore_done: "done", todo_done: "done", walk: "dogs", food: "dogs", med: "med", note: "note" };
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -62,7 +68,7 @@ Deno.serve(async (req) => {
     admin,
     me.household_id,
     (lang) => TEXT[lang][kind](me.display_name || (lang === "es" ? "Tu pareja" : "Your partner"), text),
-    isTest ? { only: user.id } : { exclude: user.id },
+    isTest ? { only: user.id } : { exclude: user.id, topic: TOPIC[kind] },
   );
   return json({ sent });
 });

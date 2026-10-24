@@ -22,19 +22,23 @@ export type Message = { title: string; body: string; tag?: string; url?: string 
 /**
  * Send a notification to members of a household.
  * `build` returns the message in each member's language, or null to skip that member.
+ * `topic` is what the notification is about; members who turned that topic off in Settings
+ * (members.notify_off) don't get it.
  */
 export async function sendToHousehold(
   admin: SupabaseClient,
   householdId: string,
   build: (lang: Lang, userId: string) => Message | null,
-  opts: { exclude?: string | null; only?: string | null } = {},
+  opts: { exclude?: string | null; only?: string | null; topic?: string } = {},
 ): Promise<number> {
-  const { data: members } = await admin.from("members").select("user_id, lang").eq("household_id", householdId);
+  const { data: members } = await admin.from("members").select("user_id, lang, notify_off").eq("household_id", householdId);
   const { data: subs } = await admin.from("push_subscriptions").select("id, user_id, endpoint, p256dh, auth").eq("household_id", householdId);
   const langOf = new Map((members ?? []).map((m) => [m.user_id, (m.lang === "es" ? "es" : "en") as Lang]));
+  const muted = new Set((members ?? []).filter((m) => opts.topic && (m.notify_off ?? []).includes(opts.topic)).map((m) => m.user_id));
   let sent = 0;
   await Promise.all((subs ?? []).map(async (s) => {
     if (opts.exclude && s.user_id === opts.exclude) return;
+    if (muted.has(s.user_id)) return;
     if (opts.only && s.user_id !== opts.only) return;
     const msg = build(langOf.get(s.user_id) ?? "en", s.user_id);
     if (!msg) return;

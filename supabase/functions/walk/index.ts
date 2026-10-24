@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     body: TEXT[lang][kind](me.display_name || (lang === "es" ? "Tu pareja" : "Your partner")),
     tag: "dogs",
     url: "./#dogs",
-  }), { exclude: tok.user_id });
+  }), { exclude: tok.user_id, topic: "dogs" });
 
   // Shown by the Shortcut, in the person's own language.
   const lang: Lang = me.lang === "es" ? "es" : "en";

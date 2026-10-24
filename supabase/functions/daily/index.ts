@@ -1,19 +1,30 @@
 // Morning reminder: what's due today, today's plans, how much is on the shopping list, dog food or
-// medicine running low (added to the list once), papers about to expire, and the rainy hours for walks
-// (for whoever turned on rain alerts).
+// medicine running low (added to the list once), papers about to expire, fixed costs charged soon,
+// and the rainy hours for walks (for whoever turned on rain alerts). On Sundays, also a summary of the week.
 // Called once a day by the scheduler in supabase/daily-reminder.sql.
 import { addDays, adminClient, cors, Lang, madridToday, occursOn, sendToHousehold, STARTER } from "../_shared/push.ts";
 import { forecast, spells } from "../_shared/weather.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.45.4";
 
-// Fixed monthly costs: once their day of the month has come (the last day for 29–31 in short months),
-// add them as an expense, at most once a month.
+type Cost = { start_month: string; every_months: number; day: number };
+const monthsFrom = (a: string, b: string) => (Number(b.slice(0, 4)) - Number(a.slice(0, 4))) * 12 + Number(b.slice(5, 7)) - Number(a.slice(5, 7));
+const nextMonth = (m: string) => { const [y, mo] = m.split("-").map(Number); return mo === 12 ? `${y + 1}-01-01` : `${y}-${String(mo + 1).padStart(2, "0")}-01`; };
+// Charged this month? Every every_months months, counting from start_month.
+const chargedIn = (c: Cost, month: string) => { const n = monthsFrom(c.start_month, month); return n >= 0 && n % (c.every_months || 1) === 0; };
+const chargeDate = (c: Cost, month: string) => {
+  const [y, m] = month.split("-").map(Number), last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${month.slice(0, 8)}${String(Math.min(c.day, last)).padStart(2, "0")}`;
+};
+const eur = (n: number, lang: Lang) => new Intl.NumberFormat(lang === "es" ? "es-ES" : "en-IE", { style: "currency", currency: "EUR" }).format(Number(n));
+
+// Fixed costs: once their day of the month has come (the last day for 29–31 in short months) in a month
+// they are charged, add them as an expense, at most once a month.
 async function addFixedCosts(admin: SupabaseClient, today: string) {
   const month = today.slice(0, 8) + "01", [y, m, d] = today.split("-").map(Number);
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const { data: costs } = await admin.from("fixed_costs").select("*").eq("active", true).lte("start_month", month);
   for (const c of costs ?? []) {
-    if (c.last_month && c.last_month >= month) continue;
+    if ((c.last_month && c.last_month >= month) || !chargedIn(c, month)) continue;
     const day = Math.min(c.day, lastDay);
     if (d < day) continue;
     // Claim the month first, so two runs can never add it twice.
@@ -81,6 +92,83 @@ async function papersDue(admin: SupabaseClient, householdId: string, today: stri
   return out;
 }
 
+// Fixed costs whose next charge is within their reminder days (from tomorrow): mentioned once per charge.
+type Bill = { name: string; amount: number; left: number; private: boolean; created_by: string | null };
+async function billsSoon(admin: SupabaseClient, householdId: string, today: string) {
+  const out: Bill[] = [], month = today.slice(0, 8) + "01";
+  const { data: costs } = await admin.from("fixed_costs").select("id, name, amount, day, start_month, every_months, remind_days, reminded_for, last_month, private, created_by")
+    .eq("household_id", householdId).eq("active", true).gt("remind_days", 0);
+  for (const c of costs ?? []) {
+    for (const m of [month, nextMonth(month)]) {
+      if (!chargedIn(c, m) || (c.last_month && c.last_month >= m)) continue;
+      const date = chargeDate(c, m), left = daysBetween(date, today);
+      if (left < 1) continue; // today's is added as an expense instead
+      if (left <= c.remind_days && !(c.reminded_for && c.reminded_for >= date)) {
+        const { data: claimed } = await admin.from("fixed_costs").update({ reminded_for: date }).eq("id", c.id)
+          .or(`reminded_for.is.null,reminded_for.lt.${date}`).select("id");
+        if (claimed?.length) out.push({ name: c.name, amount: Number(c.amount), left, private: c.private, created_by: c.created_by });
+      }
+      break; // only the next charge
+    }
+  }
+  return out;
+}
+
+// Sunday: the last 7 days (walks, chores, shops, shared spending) and what comes in the next 7.
+async function weekly(admin: SupabaseClient, householdId: string, today: string) {
+  const from = addDays(today, -6), to = addDays(today, 7), month = today.slice(0, 8) + "01";
+  const [{ data: walks }, { count: chores }, { count: trips }, { data: spent }, { data: evs }, { data: papers }, { data: costs }, { data: people }] = await Promise.all([
+    admin.from("dog_log").select("by_user").eq("household_id", householdId).eq("kind", "walk").gte("at", from),
+    admin.from("chore_log").select("id", { count: "exact", head: true }).eq("household_id", householdId).gte("at", from),
+    admin.from("shopping_trips").select("id", { count: "exact", head: true }).eq("household_id", householdId).gte("created_at", from),
+    admin.from("expenses").select("amount").eq("household_id", householdId).eq("private", false).gte("spent_on", from).lte("spent_on", today),
+    admin.from("events").select("title, time, date, repeat").eq("household_id", householdId).lte("date", to),
+    admin.from("papers").select("title, expires_on").eq("household_id", householdId).gt("expires_on", today).lte("expires_on", to),
+    admin.from("fixed_costs").select("name, amount, day, start_month, every_months, last_month").eq("household_id", householdId).eq("active", true).eq("private", false),
+    admin.from("members").select("user_id, display_name").eq("household_id", householdId),
+  ]);
+  const perWalker = new Map<string, number>();
+  for (const w of walks ?? []) if (w.by_user) perWalker.set(w.by_user, (perWalker.get(w.by_user) ?? 0) + 1);
+  const top = [...perWalker].sort((a, b) => b[1] - a[1])[0];
+  const topName = top && perWalker.size > 1 ? (people ?? []).find((p) => p.user_id === top[0])?.display_name : "";
+  const total = Math.round((spent ?? []).reduce((t, e) => t + Number(e.amount), 0) * 100) / 100;
+  const coming: { date: string; title: string }[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = addDays(today, i);
+    for (const e of evs ?? []) if (occursOn(e, d)) coming.push({ date: d, title: e.title });
+  }
+  const bills: { date: string; name: string; amount: number }[] = [];
+  for (const c of costs ?? []) {
+    for (const m of [month, nextMonth(month)]) {
+      if (!chargedIn(c, m) || (c.last_month && c.last_month >= m)) continue;
+      const d = chargeDate(c, m);
+      if (d > today && d <= to) bills.push({ date: d, name: c.name, amount: Number(c.amount) });
+    }
+  }
+  const nWalks = (walks ?? []).length;
+  if (!nWalks && !chores && !trips && !total && !coming.length && !papers?.length && !bills.length) return 0;
+  return await sendToHousehold(admin, householdId, (lang: Lang) => {
+    const es = lang === "es";
+    const dow = (d: string) => new Intl.DateTimeFormat(es ? "es-ES" : "en-GB", { weekday: "short", timeZone: "UTC" }).format(new Date(d + "T12:00:00Z"));
+    const done = [
+      nWalks ? (es ? `${nWalks} paseos` : `${nWalks} walks`) + (topName ? (es ? ` (más: ${topName} ${top[1]})` : ` (most: ${topName} ${top[1]})`) : "") : "",
+      chores ? (es ? `${chores} tareas` : `${chores} chores`) : "",
+      trips ? (es ? `${trips} compras` : `${trips} shops`) : "",
+      total ? (es ? `${eur(total, lang)} gastado en común` : `${eur(total, lang)} shared spending`) : "",
+    ].filter(Boolean);
+    const next = [
+      ...coming.slice(0, 4).map((e) => `${e.title} (${dow(e.date)})`),
+      ...(papers ?? []).map((p) => es ? `${p.title} caduca (${dow(p.expires_on)})` : `${p.title} expires (${dow(p.expires_on)})`),
+      ...bills.map((b) => `${b.name} ${eur(b.amount, lang)} (${dow(b.date)})`),
+    ];
+    const parts = [
+      done.length ? (es ? "Últimos 7 días: " : "Last 7 days: ") + done.join(", ") : "",
+      next.length ? (es ? "Próximos 7 días: " : "Next 7 days: ") + next.join(", ") + (coming.length > 4 ? ` +${coming.length - 4}` : "") : "",
+    ].filter(Boolean);
+    return { title: es ? "Vuestra semana en casa" : "Your week at home", body: parts.join(" · "), tag: "weekly", url: "./#today" };
+  }, { topic: "weekly" });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.headers.get("x-cron-secret") !== Deno.env.get("CRON_SECRET")) return new Response("forbidden", { status: 403 });
@@ -112,9 +200,10 @@ Deno.serve(async (req) => {
         rain = spells(hours.filter((x) => x.t.startsWith(today) && x.t.slice(11, 13) >= "07" && x.t.slice(11, 13) < "22"));
       }
     }
-    const [low, papers] = await Promise.all([runningLow(admin, h.id, today), papersDue(admin, h.id, today)]);
+    const [low, papers, bills] = await Promise.all([runningLow(admin, h.id, today), papersDue(admin, h.id, today), billsSoon(admin, h.id, today)]);
+    if (new Date(today + "T12:00:00Z").getUTCDay() === 0) sent += await weekly(admin, h.id, today);
     const news = due.length || events.length || medsDue.length || low.length || papers.length;
-    if (!news && !rain.length) continue; // nothing to say today
+    if (!news && !rain.length && !bills.length) continue; // nothing to say today
 
     sent += await sendToHousehold(admin, h.id, (lang: Lang, userId: string) => {
       const es = lang === "es";
@@ -136,15 +225,20 @@ Deno.serve(async (req) => {
           ? `${p.title} ${es ? "caducado" : "expired"}`
           : p.left === 0 ? `${p.title} ${es ? "caduca hoy" : "expires today"}` : `${p.title} ${es ? `caduca en ${p.left} d` : `expires in ${p.left}d`}`).join(", "));
       }
+      // Private fixed costs: only for whoever added them.
+      const myBills = bills.filter((b) => !b.private || b.created_by === userId);
+      if (myBills.length) {
+        parts.push((es ? "Pagos: " : "Bills soon: ") + myBills.map((b) => `${b.name} ${eur(b.amount, lang)} ${es ? `en ${b.left} d` : `in ${b.left}d`}`).join(", "));
+      }
       if (toBuy || low.length) parts.push(es ? `${(toBuy ?? 0) + low.length} por comprar` : `${(toBuy ?? 0) + low.length} to buy`);
       const rainForMe = rain.length > 0 && rainFor.has(userId);
-      if (!news && !rainForMe) return null; // only rain, and not for this person
+      if (!news && !rainForMe && !myBills.length) return null; // only rain or someone else's bills
       if (rainForMe) {
         const peak = Math.max(...rain.map((r) => r.peak));
         parts.push((es ? "Paseos: lluvia " : "Walks: rain ") + rain.slice(0, 3).map((r) => `${r.from}–${r.to}`).join(", ") + ` (${peak}${es ? " %" : "%"})`);
       }
       return { title: es ? "Hoy en casa" : "Today at home", body: parts.join(" · "), tag: "daily", url: "./#today" };
-    });
+    }, { topic: "daily" });
   }
   return new Response(JSON.stringify({ sent }), { headers: { ...cors, "Content-Type": "application/json" } });
 });
