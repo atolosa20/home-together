@@ -333,11 +333,20 @@ function todoRow(t) {
     ${delBtn("chores", t.id)}</div>`;
 }
 
+// A calm sentence, picked at random each time the app opens (the same one in both languages).
+let mantraAt = Math.random(), mantraOn = true;
+try { mantraOn = localStorage.getItem("ht-mantra") !== "off"; } catch (e) {}
+function mantraCard() {
+  if (!mantraOn) return "";
+  const list = T("mantras");
+  return `<button class="card mantra" data-act="mantra-next" aria-label="${esc(T("mantraNext"))}"><span aria-hidden="true">🪷</span><q>${esc(list[Math.floor(mantraAt * list.length)])}</q></button>`;
+}
 function viewToday() {
   const d = dueNow(), meds = medsDueNow(), ev = upcoming(5), groc = S.groceries.filter(g => !g.done).length;
   const open = todos().filter(t => !t.done);
   const week = upcoming(999).filter(e => diffDays(e.date, today()) < 7).length;
   return `
+  ${mantraCard()}
   <div class="stats">
     <a class="card stat ${d.length ? "alert" : ""}" href="#chores"><b>${d.length}</b><span>${T("choresDue")}</span></a>
     <a class="card stat" href="#groceries"><b>${groc}</b><span>${T("toBuy")}</span></a>
@@ -951,6 +960,9 @@ async function renderSettings() {
     <div class="card"><b>${T("members")}</b>${S.members.map(m => `<div>${esc(m.display_name || "—")}${m.user_id === me ? ` <span class="chip">${T("you_")}</span>` : ""}</div>`).join("")}</div>
     <div class="card"><b>${T("notif")}</b>${notifBody}</div>
     ${weatherSettings()}
+    <div class="card"><b>${T("mantraTitle")}</b>
+      <label class="toggle"><input type="checkbox" id="mantraOn" ${mantraOn ? "checked" : ""}> ${T("mantraShow")}</label>
+      <p class="hint" style="margin:0">${T("mantraHint")}</p></div>
     <div class="card"><div class="kv"><b>${T("language")}</b>
       <div class="lang" role="group"><button data-lang="en" aria-pressed="${lang === "en"}">EN</button><button data-lang="es" aria-pressed="${lang === "es"}">ES</button></div></div></div>
     <div class="card"><b>${T("scTitle")}</b><p class="hint" style="margin:0">${T("scHint")}</p>
@@ -1210,6 +1222,10 @@ document.addEventListener("click", async ev => {
     case "pick": calSel = b.dataset.d; calMonth = calSel.slice(0, 7); render(); return;
     case "close-settings": closeSettings(); return;
     case "open-settings": openSettings(); return;
+    case "mantra-next": {
+      const n = T("mantras").length, i = Math.floor(mantraAt * n);
+      mantraAt = ((i + 1 + Math.floor(Math.random() * (n - 1))) % n + 0.5) / n; render(); return;
+    }
     case "wx-change": ui.placeEdit = true; ui.places = null; renderSettings(); return;
     case "wx-cancel": ui.placeEdit = false; ui.places = null; renderSettings(); return;
     case "wx-here": placeHere(); return;
@@ -1294,6 +1310,10 @@ document.addEventListener("submit", async ev => {
 // File pickers: the receipt is kept aside so a live refresh of the list can't drop it.
 document.addEventListener("change", ev => {
   if (ev.target.id === "fReceipt") ui.receiptFiles = [...ev.target.files];
+  if (ev.target.id === "mantraOn") {
+    mantraOn = ev.target.checked; try { localStorage.setItem("ht-mantra", mantraOn ? "on" : "off"); } catch (e) {}
+    render();
+  }
   if (ev.target.id === "wxAlerts") {
     const on = ev.target.checked, m = S.members.find(x => x.user_id === me); if (m) m.rain_alerts = on;
     run(sb.from("members").update({ rain_alerts: on }).eq("user_id", me), on ? "wxAlertsOn" : "wxAlertsOff").then(ok => { if (!ok) { load("members"); ev.target.checked = !on; } });

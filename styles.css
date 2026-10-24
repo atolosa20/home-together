@@ -285,3 +285,9 @@ nav.tabs a span:not(.badge){font-size:.68rem}
 .wx-places .btn{text-align:left}
 .row-form{display:flex;gap:8px}
 .row-form input{flex:1;min-width:0}
+
+/* Sentence of the day, at the top of Today */
+.mantra{display:flex;align-items:center;gap:12px;width:100%;margin-bottom:12px;padding:14px 16px;border:0;text-align:left;cursor:pointer;
+  font:inherit;color:var(--ink);background:linear-gradient(135deg,var(--ok-soft),var(--surface))}
+.mantra span{font-size:1.5rem;line-height:1}
+.mantra q{font-family:var(--display);font-size:1.05rem;font-weight:600;line-height:1.35;quotes:"“" "”"}
