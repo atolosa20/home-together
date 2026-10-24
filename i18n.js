@@ -33,7 +33,8 @@ window.I18N = {
     // settings
     invite:"Invite your partner", inviteHint:"They create an account in the app, choose “Join with a code” and type:",
     copy:"Copy", copied:"Copied",
-    tabHome:"Home",
+    tabHome:"Home", tabAgenda:"Agenda",
+    subs:{"chores":"Chores","calendar":"Calendar","dogtoday":"Today","food":"Food","health":"Health","pack":"Pack","money":"Spending","papers":"Papers","info":"Info","who":"Activity"},
     headsUp:"Heads-up",
     suppliesH:"Food & supplies",
     noSupplies:"Add the dogs' food bag: the app works out when it runs out, warns you a few days before and puts it on the shopping list.",
@@ -224,7 +225,7 @@ window.I18N = {
   es: {
     months:["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"],
     dow:["dom","lun","mar","mié","jue","vie","sáb"], dowGrid:["L","M","X","J","V","S","D"],
-    tabToday:"Hoy", tabShop:"Compra", tabChores:"Tareas", tabCal:"Agenda", tabDogs:"Perros", tabMoney:"Gastos",
+    tabToday:"Hoy", tabShop:"Compra", tabChores:"Tareas", tabCal:"Calendario", tabDogs:"Perros", tabMoney:"Gastos",
     expCats:{groceries:"Supermercado",home:"Casa",bills:"Facturas",dogs:"Perros",eating_out:"Comer fuera",transport:"Transporte",leisure:"Ocio",health:"Salud",clothes:"Ropa",gifts:"Regalos",other:"Otros"},
     amount:"Importe (€)", category:"Categoría", shopOrWeb:"Tienda o web (opcional)", byShop:"Por tienda", paidByLbl:"Pagado por", paidBy:w => `pagado por ${w}`, expNote:"En qué (opcional)", onlyMe:"Solo yo",
     vsLast:d => d === 0 ? "igual que el mes pasado" : d > 0 ? `${d} % más que el mes pasado` : `${-d} % menos que el mes pasado`,
@@ -250,7 +251,8 @@ window.I18N = {
     code:"Código de invitación", create:"Crear casa", join:"Unirme", badCode:"Ese código no corresponde a ninguna casa. Revísalo e inténtalo de nuevo.",
     invite:"Invita a tu pareja", inviteHint:"Que cree una cuenta en la app, elija «Unirme con un código» y escriba:",
     copy:"Copiar", copied:"Copiado",
-    tabHome:"Casa",
+    tabHome:"Casa", tabAgenda:"Agenda",
+    subs:{"chores":"Tareas","calendar":"Calendario","dogtoday":"Hoy","food":"Comida","health":"Salud","pack":"Perros","money":"Gastos","papers":"Papeles","info":"Info","who":"Actividad"},
     headsUp:"Avisos",
     suppliesH:"Comida y suministros",
     noSupplies:"Añade el saco de pienso: la app calcula cuándo se acaba, te avisa unos días antes y lo pone en la lista de la compra.",
