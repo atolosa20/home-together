@@ -1,5 +1,6 @@
-// Morning reminder: what's due today, today's plans, how much is on the shopping list,
-// and the rainy hours for walks (for whoever turned on rain alerts).
+// Morning reminder: what's due today, today's plans, how much is on the shopping list, dog food or
+// medicine running low (added to the list once), papers about to expire, and the rainy hours for walks
+// (for whoever turned on rain alerts).
 // Called once a day by the scheduler in supabase/daily-reminder.sql.
 import { addDays, adminClient, cors, Lang, madridToday, occursOn, sendToHousehold, STARTER } from "../_shared/push.ts";
 import { forecast, spells } from "../_shared/weather.ts";
@@ -24,6 +25,60 @@ async function addFixedCosts(admin: SupabaseClient, today: string) {
       paid_by: c.paid_by, note: c.name, private: c.private, fixed_id: c.id, created_by: c.created_by,
     });
   }
+}
+
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
+
+// Put an item on the shopping list unless it is already there (not yet bought).
+async function addToList(admin: SupabaseClient, householdId: string, name: string) {
+  const { data } = await admin.from("groceries").select("id").eq("household_id", householdId).eq("done", false).ilike("name", name).limit(1);
+  if (!data?.length) await admin.from("groceries").insert({ household_id: householdId, name, cat: "dogs" });
+}
+
+// Food bags within their warning days, and medicines with about 5 days (or 2 doses) left.
+// Each is claimed first, so it is added to the list once per bag / refill however often this runs.
+async function runningLow(admin: SupabaseClient, householdId: string, today: string) {
+  const out: { name: string; left: number | null }[] = [];
+  const { data: supplies } = await admin.from("dog_supplies").select("id, name, size, per_day, opened_on, warn_days, alerted_on").eq("household_id", householdId);
+  for (const s of supplies ?? []) {
+    const left = daysBetween(addDays(s.opened_on, Math.floor(Number(s.size) / Number(s.per_day))), today);
+    if (left > s.warn_days || (s.alerted_on && s.alerted_on >= s.opened_on)) continue;
+    const { data: claimed } = await admin.from("dog_supplies").update({ alerted_on: today }).eq("id", s.id)
+      .or(`alerted_on.is.null,alerted_on.lt.${s.opened_on}`).select("id");
+    if (!claimed?.length) continue;
+    await addToList(admin, householdId, s.name);
+    out.push({ name: s.name, left: Math.max(0, left) });
+  }
+  const { data: meds } = await admin.from("dog_meds").select("id, name, every, stock, dogs(name)")
+    .eq("household_id", householdId).eq("low_alerted", false).not("stock", "is", null);
+  for (const m of meds ?? []) {
+    const left = m.every ? m.stock * m.every : null;
+    if (left !== null ? left > 5 : m.stock > 2) continue;
+    const { data: claimed } = await admin.from("dog_meds").update({ low_alerted: true }).eq("id", m.id).eq("low_alerted", false).select("id");
+    if (!claimed?.length) continue;
+    const dog = (m.dogs as { name?: string } | null)?.name;
+    const name = dog ? `${m.name} (${dog})` : m.name;
+    await addToList(admin, householdId, name);
+    out.push({ name, left });
+  }
+  return out;
+}
+
+// Papers to mention today: once when they enter their reminder window, once on the day they expire.
+async function papersDue(admin: SupabaseClient, householdId: string, today: string) {
+  const out: { title: string; left: number }[] = [];
+  const { data: papers } = await admin.from("papers").select("id, title, expires_on, remind_days, reminded, dogs(name)")
+    .eq("household_id", householdId).not("expires_on", "is", null).lt("reminded", 2);
+  for (const p of papers ?? []) {
+    const left = daysBetween(p.expires_on, today);
+    const level = left <= 0 ? 2 : left <= p.remind_days ? 1 : 0;
+    if (level <= p.reminded) continue;
+    const { data: claimed } = await admin.from("papers").update({ reminded: level }).eq("id", p.id).lt("reminded", level).select("id");
+    if (!claimed?.length) continue;
+    const dog = (p.dogs as { name?: string } | null)?.name;
+    out.push({ title: dog ? `${p.title} (${dog})` : p.title, left });
+  }
+  return out;
 }
 
 Deno.serve(async (req) => {
@@ -57,8 +112,9 @@ Deno.serve(async (req) => {
         rain = spells(hours.filter((x) => x.t.startsWith(today) && x.t.slice(11, 13) >= "07" && x.t.slice(11, 13) < "22"));
       }
     }
-    if (!due.length && !events.length && !medsDue.length && !rain.length) continue; // nothing to say today
-
+    const [low, papers] = await Promise.all([runningLow(admin, h.id, today), papersDue(admin, h.id, today)]);
+    const news = due.length || events.length || medsDue.length || low.length || papers.length;
+    if (!news && !rain.length) continue; // nothing to say today
 
     sent += await sendToHousehold(admin, h.id, (lang: Lang, userId: string) => {
       const es = lang === "es";
@@ -71,9 +127,18 @@ Deno.serve(async (req) => {
         parts.push((es ? "Hoy: " : "Today: ") + (events ?? []).map((e) => e.time ? `${e.title} ${e.time}` : e.title).join(", "));
       }
       if (medsDue.length) parts.push((es ? "Medicinas: " : "Medicines: ") + medsDue.join(", "));
-      if (toBuy) parts.push(es ? `${toBuy} por comprar` : `${toBuy} to buy`);
+      if (low.length) {
+        parts.push((es ? "Se acaba (añadido a la compra): " : "Running low (added to the list): ") +
+          low.map((x) => x.left === null ? x.name : `${x.name} ${x.left}${es ? " d" : "d"}`).join(", "));
+      }
+      if (papers.length) {
+        parts.push((es ? "Papeles: " : "Papers: ") + papers.map((p) => p.left < 0
+          ? `${p.title} ${es ? "caducado" : "expired"}`
+          : p.left === 0 ? `${p.title} ${es ? "caduca hoy" : "expires today"}` : `${p.title} ${es ? `caduca en ${p.left} d` : `expires in ${p.left}d`}`).join(", "));
+      }
+      if (toBuy || low.length) parts.push(es ? `${(toBuy ?? 0) + low.length} por comprar` : `${(toBuy ?? 0) + low.length} to buy`);
       const rainForMe = rain.length > 0 && rainFor.has(userId);
-      if (!due.length && !events.length && !medsDue.length && !rainForMe) return null; // only rain, and not for this person
+      if (!news && !rainForMe) return null; // only rain, and not for this person
       if (rainForMe) {
         const peak = Math.max(...rain.map((r) => r.peak));
         parts.push((es ? "Paseos: lluvia " : "Walks: rain ") + rain.slice(0, 3).map((r) => `${r.from}–${r.to}`).join(", ") + ` (${peak}${es ? " %" : "%"})`);

@@ -80,10 +80,10 @@ const configured = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR-PROJECT"
 const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
 // ---------- state ----------
-const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], home: null };
+const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], home: null };
 let me = null, hid = null, channel = null, online = true;
 let tab = "today", calMonth = today().slice(0, 7), calSel = today(), pendingDelete = null;
-const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create" };
+const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null };
 try {
   const g = localStorage.getItem("ht-grocCat"); if (GROC_KEYS.includes(g)) ui.grocCat = g;
   const s = localStorage.getItem("ht-shopView"); if (SHOP_VIEWS.includes(s)) ui.shopView = s;
@@ -123,7 +123,11 @@ const DEFAULTS = {
   needs: { cat: "other", price: "", store: "", link: "", notes: "", done: false, done_by: null },
   shopping_trips: { store: "", total: "", items: [] },
   dog_log: { dog_id: null, detail: "" },
-  dog_meds: { dose: "", every: 0, last_given: null, last_by: null, at_time: "09:00", stock: null },
+  dog_meds: { dose: "", every: 0, last_given: null, last_by: null, at_time: "09:00", stock: null, low_alerted: false },
+  dog_supplies: { dog_id: null, unit: "kg", warn_days: 5, alerted_on: null },
+  papers: { dog_id: null, expires_on: null, remind_days: 14, notes: "", reminded: 0 },
+  home_info: { value: "" },
+  chore_log: { chore_id: null, title: "" },
   expenses: { cat: "other", note: "", store: "", private: false, trip_id: null, need_id: null, fixed_id: null },
   fixed_costs: { cat: "bills", private: false, active: true }
 };
@@ -193,6 +197,11 @@ const TABLES = {
   expenses: () => sb.from("expenses").select("*").gte("spent_on", (new Date().getFullYear() - 1) + "-01-01").order("spent_on", { ascending: false }),
   fixed_costs: () => sb.from("fixed_costs").select("*").order("day"),
   budgets: () => sb.from("budgets").select("cat, amount"),
+  dog_supplies: () => sb.from("dog_supplies").select("*").order("created_at"),
+  papers: () => sb.from("papers").select("*").order("created_at"),
+  home_info: () => sb.from("home_info").select("*").order("created_at"),
+  // This month's chores done (to undo a ticked to-do); the monthly counts come from home_stats.
+  chore_log: () => sb.from("chore_log").select("*").gte("at", today().slice(0, 7) + "-01").order("at", { ascending: false }),
   history: () => sb.from("grocery_history").select("name_key, name, cat, store, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
 };
 async function load(name) {
@@ -233,7 +242,7 @@ const reloadSoon = {};
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("home-" + hid);
-  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets"].forEach(t => {
+  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log"].forEach(t => {
     channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `household_id=eq.${hid}` }, () => {
       clearTimeout(reloadSoon[t]); reloadSoon[t] = setTimeout(() => load(t), 150);
     });
@@ -367,6 +376,19 @@ function mantraCard() {
     <span class="mantra-moon">${SIGN_ICONS[sky.sun]}\uFE0E ${T("sunIn")} ${sun[0]}: ${sun[1]}.</span>
     <span class="mantra-moon">${SIGN_ICONS[sky.moon]}\uFE0E ${T("moonIn")} ${moonSign[0]}: ${moonSign[2]}.</span></button>`;
 }
+// On Today: food or medicine running low, papers about to expire, budgets at 80% or more.
+function headsUp() {
+  const link = (href, ic, t, s) => `<a class="row" href="${href}"><span class="log-ic">${ic}</span><div class="main"><div class="t">${esc(t)}</div><div class="s">${esc(s)}</div></div></a>`;
+  const m = today().slice(0, 7);
+  const budgets = EXP_KEYS.filter(budgetOf).map(k => [k, sumOf(monthExp(m).filter(e => expCat(e.cat) === k && !e.private)), budgetOf(k)]).filter(([, s, b]) => s >= b * 0.8);
+  const rows = [
+    ...suppliesLow().map(s => link("#dogs", LOG_ICON.food, s.name, supplyStatus(s))),
+    ...S.dog_meds.filter(medLow).map(x => link("#dogs", LOG_ICON.med, `${dogName(x.dog_id)}: ${x.name}`, T("left")(x.stock))),
+    ...papersSoon().map(p => paperRow(p, true)),
+    ...budgets.map(([k, s, b]) => link("#money", "💶", T("expCats")[k], T("budgetUsed")(money(s), money(b), Math.round(s / b * 100)))),
+  ];
+  return rows.length ? `<section class="sec"><h2>${T("headsUp")}</h2><div class="card list">${rows.join("")}</div></section>` : "";
+}
 function viewToday() {
   const d = dueNow(), meds = medsDueNow(), ev = upcoming(5), groc = S.groceries.filter(g => !g.done).length;
   const open = todos().filter(t => !t.done);
@@ -379,6 +401,7 @@ function viewToday() {
     <a class="card stat" href="#calendar"><b>${week}</b><span>${T("thisWeek")}</span></a>
   </div>
   <a class="card spend-line" href="#money"><span>${T("spentMonth")}</span><b>${esc(money(sumOf(monthExp(today().slice(0, 7)))))}</b></a>
+  ${headsUp()}
   ${S.dogs.length ? `<section class="sec">${dogButtons()}</section>` : ""}
   <section class="sec"><div class="sec-head"><h2>${T("dueNow")}</h2><a class="link" href="#chores">${T("allChores")}</a></div>
     <div class="card list">${d.length || meds.length ? d.map(c => routineRow(c, true)).join("") + meds.map(m => medRow(m, true)).join("")
@@ -473,7 +496,7 @@ function viewNeeds() {
     <div class="card list">${done.map(row).join("")}</div></section>` : ""}`;
 }
 
-const FILE_COL = { event: "event_id", trip: "trip_id", expense: "expense_id" };
+const FILE_COL = { event: "event_id", trip: "trip_id", expense: "expense_id", paper: "paper_id" };
 const filesOf = (kind, id) => S.attachments.filter(a => a[FILE_COL[kind]] === id);
 function clipBtn(kind, id, title) {
   const n = filesOf(kind, id).length;
@@ -563,15 +586,18 @@ const medDue = m => m.every ? (m.last_given ? addDays(m.last_given, m.every) : m
 const medsDueNow = () => S.dog_meds.filter(m => m.every && medDue(m) <= today());
 const medDetail = m => `${m.name}${m.dose ? ` (${m.dose})` : ""}`;
 const medEvery = n => n ? repeatLabel(n) : T("whenNeeded");
+// Running low: about 5 days of doses left (or 2 doses, for "when needed"). Keep in step with the daily function.
+const medLow = m => m.stock != null && (m.every ? m.stock * m.every <= 5 : m.stock <= 2);
 function medRow(m, compact) {
   const last = m.last_given ? T("lastDone")(fmtDay(m.last_given), m.last_by ? who(m.last_by) : "") : T("notYet");
   const sub = [compact ? dogName(m.dog_id) : "", m.dose, medEvery(m.every), m.every ? T("atTime")(m.at_time || "09:00") : "", last,
-    m.stock != null ? T("left")(m.stock) : ""].filter(Boolean).map(esc).join(" · ");
-  return `<div class="row ${m.stock != null && m.stock <= 2 ? "low" : ""}">
+    m.stock != null ? T("left")(m.stock) + (m.every ? ` (${T("aboutDays")(m.stock * m.every)})` : "") : ""].filter(Boolean).map(esc).join(" · ");
+  return `<div class="row ${medLow(m) ? "low" : ""}">
     <span class="log-ic">${LOG_ICON.med}</span>
     <div class="main"><div class="t">${esc(m.name)}</div><div class="s">${sub}</div></div>
     ${m.every ? duePill(medDue(m)) : ""}
     <button class="btn small" data-act="med-given" data-id="${esc(m.id)}">${T("given")}</button>
+    ${compact || m.stock == null ? "" : `<button class="btn ghost small" data-act="med-refill" data-id="${esc(m.id)}">${T("refill")}</button>`}
     ${compact ? "" : delBtn("dog_meds", m.id)}</div>`;
 }
 function medForm(dogId) {
@@ -583,6 +609,109 @@ function medForm(dogId) {
     <input type="number" id="mStock" min="0" inputmode="numeric" placeholder="${esc(T("medStock"))}" style="flex:0 1 110px">
     <button type="button" class="btn ghost" data-act="med-cancel">${T("cancel")}</button><button class="btn">${T("add")}</button>
   </form>`;
+}
+
+// A date with its year when it isn't this year (papers can expire years from now).
+const fmtDate = s => fmtDay(s) + (s.slice(0, 4) !== today().slice(0, 4) ? " " + s.slice(0, 4) : "");
+const forOptions = (sel, none) => `<option value="">${esc(none)}</option>${S.dogs.map(d => `<option value="${esc(d.id)}" ${d.id === sel ? "selected" : ""}>${esc(d.name)}</option>`).join("")}`;
+const formButtons = (table, id, cancelAct) => `<div class="kv"><span>${id ? delBtn(table, id) : ""}</span>
+  <span class="kv"><button type="button" class="btn ghost small" data-act="${cancelAct}">${T("cancel")}</button><button class="btn small">${T("save")}</button></span></div>`;
+
+// Food bags (and anything else used up at a steady pace): it runs out on opened_on + size / per_day.
+// The daily function puts it on the shopping list warn_days before.
+const UNITS = ["kg", "g", "l", "units"];
+const numFmt = n => Number(n).toLocaleString(lang === "es" ? "es-ES" : "en-IE", { maximumFractionDigits: 3 });
+const parseNum = s => { const n = Number(String(s || "").trim().replace(",", ".")); return Number.isFinite(n) && n > 0 ? n : null; };
+const supplyEnd = s => addDays(s.opened_on, Math.floor(Number(s.size) / Number(s.per_day)));
+const supplyLeft = s => diffDays(supplyEnd(s), today());
+const suppliesLow = () => S.dog_supplies.filter(s => supplyLeft(s) <= s.warn_days);
+const supplyStatus = s => { const left = supplyLeft(s); return left < 0 ? T("ranOut") : left === 0 ? T("runsOutToday") : T("daysLeft")(left, fmtDate(supplyEnd(s))); };
+function supplyRow(s) {
+  if (ui.supEdit === s.id) return supplyForm(s);
+  const left = supplyLeft(s), total = Math.max(1, Math.floor(Number(s.size) / Number(s.per_day))), low = left <= s.warn_days;
+  const sub = [s.dog_id ? dogName(s.dog_id) : T("allDogs"), T("perDay")(numFmt(s.per_day), T("units")[s.unit] || s.unit), T("opened")(fmtDate(s.opened_on))];
+  return `<div class="row ${low ? "low" : ""}"><span class="log-ic">${LOG_ICON.food}</span>
+    <div class="main"><div class="t">${esc(s.name)}</div>
+      <div class="bar ${left < 0 ? "over" : low ? "near" : ""}"><i style="width:${Math.round(Math.max(0, Math.min(1, left / total)) * 100)}%"></i></div>
+      <div class="s">${[supplyStatus(s), ...sub].map(esc).join(" · ")}</div></div>
+    <button class="btn small" data-act="sup-new" data-id="${esc(s.id)}">${T("newBag")}</button>
+    <button class="btn ghost small" data-act="sup-edit" data-id="${esc(s.id)}">${T("editDog")}</button></div>`;
+}
+function supplyForm(s = {}) {
+  const val = x => x == null ? "" : esc(String(Number(x)).replace(".", lang === "es" ? "," : ".")); // no thousands dots: 1000 g stays 1000
+  return `<form class="row edit-row" id="fSupply" data-id="${esc(s.id || "")}">
+    <input type="text" id="suName" value="${esc(s.name || "")}" placeholder="${esc(T("supName"))}" aria-label="${esc(T("supName"))}" required maxlength="60" autocomplete="off">
+    <div class="edit-grid">
+      <label class="inline"><span>${T("supFor")}</span><select id="suDog">${forOptions(s.dog_id, T("allDogs"))}</select></label>
+      <label class="inline"><span>${T("supSize")}</span><input type="text" id="suSize" inputmode="decimal" value="${val(s.size)}" required style="width:70px"></label>
+      <select id="suUnit" aria-label="${esc(T("supUnit"))}">${UNITS.map(u => `<option value="${u}" ${u === (s.unit || "kg") ? "selected" : ""}>${esc(T("units")[u])}</option>`).join("")}</select>
+      <label class="inline"><span>${T("supPerDay")}</span><input type="text" id="suPerDay" inputmode="decimal" value="${val(s.per_day)}" required style="width:70px"></label>
+      <label class="inline"><span>${T("supOpened")}</span><input type="date" id="suOpened" value="${esc(s.opened_on || today())}" required></label>
+      <label class="inline"><span>${T("supWarn")}</span><input type="number" id="suWarn" min="0" max="60" value="${s.warn_days ?? 5}" style="width:60px"></label>
+    </div>
+    <div class="hint" style="margin:0">${T("supHint")}</div>
+    ${formButtons("dog_supplies", s.id, "sup-cancel")}
+  </form>`;
+}
+function saveSupply(f) {
+  const v = id => ($("#" + id)?.value || "").trim(), name = v("suName"), size = parseNum(v("suSize")), perDay = parseNum(v("suPerDay"));
+  if (!name) return; if (size === null || perDay === null) { toast("badAmount"); return; }
+  const values = { name, dog_id: v("suDog") || null, size: Math.round(size * 100) / 100, per_day: Math.round(perDay * 1000) / 1000, unit: v("suUnit") || "kg",
+    opened_on: v("suOpened") || today(), warn_days: Math.min(60, Math.max(0, parseInt(v("suWarn"), 10) || 0)) };
+  const old = f.dataset.id && find(S.dog_supplies, f.dataset.id);
+  // A different bag or pace: the list reminder can come again.
+  if (old && (values.opened_on !== old.opened_on || values.size !== Number(old.size) || values.per_day !== Number(old.per_day))) values.alerted_on = null;
+  ui.supEdit = null;
+  save(old ? { t: "dog_supplies", kind: "update", id: old.id, values } : { t: "dog_supplies", kind: "insert", values: { id: uuid(), ...values } }, "saved");
+}
+
+// Papers with an expiry date, for a dog or for the home. The daily function reminds remind_days before and on the day.
+const REMIND = [7, 14, 30, 60, 90];
+const paperLeft = p => p.expires_on ? diffDays(p.expires_on, today()) : null;
+const papersSoon = () => S.papers.filter(p => { const d = paperLeft(p); return d !== null && d <= p.remind_days; }).sort(byExpiry);
+const byExpiry = (a, b) => (a.expires_on || "9999").localeCompare(b.expires_on || "9999") || a.title.localeCompare(b.title);
+function paperPill(p) {
+  const d = paperLeft(p);
+  if (d === null || d > p.remind_days) return "";
+  if (d < 0) return `<span class="pill late">${T("expired")}</span>`;
+  if (d === 0) return `<span class="pill today">${T("expiresToday")}</span>`;
+  return `<span class="pill soon">${esc(T("inDays")(d))}</span>`;
+}
+function paperRow(p, compact) {
+  if (!compact && ui.paperEdit?.id === p.id) return paperForm(p);
+  const sub = [p.dog_id ? dogName(p.dog_id) : compact ? T("forHome") : "", p.expires_on ? T("expiresOn")(fmtDate(p.expires_on)) : T("noExpiry"), compact ? "" : p.notes]
+    .filter(Boolean).map(esc).join(" · ");
+  return `<div class="row"><span class="log-ic">📄</span>
+    <div class="main"><div class="t">${esc(p.title)}</div><div class="s">${sub}</div></div>
+    ${paperPill(p)}${clipBtn("paper", p.id, p.title)}
+    ${compact ? "" : `<button class="btn ghost small" data-act="paper-edit" data-id="${esc(p.id)}">${T("editDog")}</button>`}</div>`;
+}
+function paperForm(p) {
+  return `<form class="row edit-row" id="fPaper" data-id="${esc(p.id || "")}">
+    <input type="text" id="paTitle" value="${esc(p.title || "")}" placeholder="${esc(T(p.dog_id ? "paperDogPh" : "paperPh"))}" aria-label="${esc(T("paperName"))}" required maxlength="80" autocomplete="off">
+    <div class="edit-grid">
+      <label class="inline"><span>${T("paperFor")}</span><select id="paDog">${forOptions(p.dog_id, T("forHome"))}</select></label>
+      <label class="inline"><span>${T("paperExpires")}</span><input type="date" id="paExp" value="${esc(p.expires_on || "")}"></label>
+      <label class="inline"><span>${T("paperRemind")}</span><select id="paRemind">${REMIND.map(n => `<option value="${n}" ${n === (p.remind_days ?? 14) ? "selected" : ""}>${esc(T("daysBefore")(n))}</option>`).join("")}</select></label>
+    </div>
+    <input type="text" id="paNotes" value="${esc(p.notes || "")}" placeholder="${esc(T("paperNotes"))}" aria-label="${esc(T("paperNotes"))}" autocomplete="off">
+    ${formButtons("papers", p.id, "paper-cancel")}
+  </form>`;
+}
+function savePaper(f) {
+  const v = id => ($("#" + id)?.value || "").trim(), title = v("paTitle"); if (!title) return;
+  const values = { title, dog_id: v("paDog") || null, expires_on: v("paExp") || null, remind_days: Number(v("paRemind")) || 14, notes: v("paNotes") };
+  const old = f.dataset.id && find(S.papers, f.dataset.id);
+  if (!old || values.expires_on !== old.expires_on || values.remind_days !== old.remind_days) values.reminded = 0; // renewed: remind again
+  ui.paperEdit = null;
+  save(old ? { t: "papers", kind: "update", id: old.id, values } : { t: "papers", kind: "insert", values: { id: uuid(), ...values } }, "saved");
+}
+// A papers section: the list, with the add form on top while adding here.
+function papersSection(where, list, title, empty) {
+  const adding = ui.paperEdit && !ui.paperEdit.id && ui.paperEdit.where === where;
+  return `<section class="sec"><div class="sec-head"><h2>${title}</h2>${adding ? "" : `<button class="btn small" data-act="paper-add" data-where="${where}">+ ${T("add")}</button>`}</div>
+    <div class="card list">${adding ? paperForm({ dog_id: where === "dogs" ? S.dogs[0]?.id || null : null }) : ""}
+      ${list.length ? list.map(p => paperRow(p)).join("") : adding ? "" : `<div class="empty">${empty}</div>`}</div></section>`;
 }
 
 // One tap: walk or meal for the whole pack.
@@ -621,11 +750,15 @@ function viewDogs() {
       : `<div class="empty">${T("noLogToday")}</div>`}</div></section>
   <section class="sec"><div class="sec-head"><h2>${T("pack")}</h2><button class="btn small" data-act="dog-edit" data-id="">${T("addDog")}</button></div>
     ${S.dogs.length ? `<div class="dogs">${S.dogs.map(dogCard).join("")}</div>` : `<div class="card"><div class="empty">${T("noDogs")}</div></div>`}</section>
+  <section class="sec"><div class="sec-head"><h2>${T("suppliesH")}</h2>${ui.supEdit === "new" ? "" : `<button class="btn small" data-act="sup-add">+ ${T("add")}</button>`}</div>
+    <div class="card list">${ui.supEdit === "new" ? supplyForm() : ""}
+      ${S.dog_supplies.length ? S.dog_supplies.map(supplyRow).join("") : ui.supEdit === "new" ? "" : `<div class="empty">${T("noSupplies")}</div>`}</div></section>
   <section class="sec"><div class="sec-head"><h2>${T("care")}</h2><a class="link" href="#chores">${T("addInChores")}</a></div>
     <div class="card list">${care.length ? care.map(c => routineRow(c)).join("") : `<div class="empty">${T("noCare")}</div>`}
     ${dogTodos.map(todoRow).join("")}</div></section>
   <section class="sec"><div class="sec-head"><h2>${T("vet")}</h2><a class="link" href="#calendar">${T("addInCal")}</a></div>
-    <div class="card list">${vet.length ? vet.map(eventRow).join("") : `<div class="empty">${T("noVet")}</div>`}</div></section>`;
+    <div class="card list">${vet.length ? vet.map(eventRow).join("") : `<div class="empty">${T("noVet")}</div>`}</div></section>
+  ${papersSection("dogs", S.papers.filter(p => p.dog_id).sort(byExpiry), T("dogPapersH"), T("noDogPapers"))}`;
 }
 function logDogs(kind) {
   save({ t: "dog_log", kind: "insert", values: { id: uuid(), kind }, notify: [kind, ""] }, kind === "walk" ? "walkLogged" : "foodLogged");
@@ -635,7 +768,7 @@ function medGiven(id) {
   save({ t: "dog_meds", kind: "update", id, values: { last_given: today(), last_by: me, stock: m.stock != null ? Math.max(0, m.stock - 1) : null } });
   const detail = medDetail(m);
   save({ t: "dog_log", kind: "insert", values: { id: uuid(), kind: "med", dog_id: m.dog_id, detail }, notify: ["med", `${dogName(m.dog_id)}: ${detail}`] },
-    m.stock != null && m.stock - 1 <= 2 ? "medLow" : "medGiven");
+    m.stock != null && medLow({ ...m, stock: Math.max(0, m.stock - 1) }) ? "medLow" : "medGiven");
 }
 
 // Add or edit a dog in the sheet.
@@ -807,8 +940,34 @@ function viewMoney() {
       <label class="toggle"><input type="checkbox" id="fxNow" checked> ${T("alsoThisMonth")}</label>
       <button class="btn">${T("add")}</button>
     </form></section>
+  ${yearCard()}
   <section class="sec"><div class="kv"><span class="eyebrow">${T("exportCsv")}</span>
     <div class="kv"><button class="btn ghost small" data-act="csv" data-scope="month">${esc(monthLabel(m))}</button><button class="btn ghost small" data-act="csv" data-scope="year">${m.slice(0, 4)}</button></div></div></section>`;
+}
+
+// The year of the month shown: a bar per month (tap one to open it), the average, against last year, and by category.
+const moneyRound = n => new Intl.NumberFormat(lang === "es" ? "es-ES" : "en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
+function yearCard() {
+  const y = ui.moneyMonth.slice(0, 4), cur = today().slice(0, 7), inYear = e => e.spent_on.startsWith(y);
+  const total = sumOf(S.expenses.filter(inYear)); if (!total) return "";
+  const months = Array.from({ length: 12 }, (_, i) => `${y}-${pad(i + 1)}`), totals = months.map(mm => sumOf(monthExp(mm))), max = Math.max(...totals);
+  const upTo = y === cur.slice(0, 4) ? Number(cur.slice(5)) : 12, prevY = String(Number(y) - 1);
+  const before = sumOf(S.expenses.filter(e => e.spent_on.startsWith(prevY) && Number(e.spent_on.slice(5, 7)) <= upTo)); // only last year is loaded
+  const vs = before ? Math.round((total - before) / before * 100) : null;
+  const cats = EXP_KEYS.map(k => [k, sumOf(S.expenses.filter(e => inYear(e) && expCat(e.cat) === k))]).filter(x => x[1]).sort((a, b) => b[1] - a[1]);
+  return `<section class="sec"><div class="sec-head"><h2>${esc(T("yearH")(y))}</h2><span class="eyebrow">${T("tapMonth")}</span></div>
+    <div class="card year-card">
+      <div><div class="money-total" style="text-align:left">${esc(money(total))}</div>
+        <div class="hint" style="margin:0">${[T("avgMonth")(money(total / upTo)), vs === null ? "" : T("vsYear")(vs, prevY)].filter(Boolean).map(esc).join(" · ")}</div></div>
+      <div class="ybars">${months.map((mm, i) => {
+        const t = totals[i], sel = mm === ui.moneyMonth, lbl = `${monthLabel(mm)}: ${money(t)}`;
+        return `<button class="ybar ${sel ? "sel" : ""}" data-act="mgo" data-m="${mm}" aria-label="${esc(lbl)}" title="${esc(lbl)}" ${mm > cur ? "disabled" : ""} ${sel ? 'aria-current="true"' : ""}>
+          <span class="col">${sel && t ? `<em>${esc(moneyRound(t))}</em>` : ""}<i style="height:${t ? Math.max(3, Math.round(t / max * 84)) : 0}px"></i></span>
+          <span class="lbl">${esc(cap(T("months")[i]).slice(0, 3))}</span></button>`;
+      }).join("")}</div>
+      <div class="list">${cats.slice(0, 6).map(([k, s]) => `<div class="row"><span class="dot" style="background:var(${EXP_COLORS[k]})"></span>
+        <div class="main"><div class="t">${esc(T("expCats")[k])}</div></div><span class="s">${Math.round(s / total * 100)}%</span><b class="amt">${esc(money(s))}</b></div>`).join("")}</div>
+    </div></section>`;
 }
 
 function addExpense(values, okKey = "added") {
@@ -949,7 +1108,56 @@ function placeHere() {
     () => toast("wxNoLocation"), { timeout: 15000, maximumAge: 600000 });
 }
 
-const VIEWS = { today: viewToday, groceries: viewShopping, money: viewMoney, chores: viewChores, calendar: viewCalendar, dogs: viewDogs };
+// ---------- home: papers, home info, who did what ----------
+function infoRow(x) {
+  return `<div class="row"><div class="main"><div class="t">${esc(x.label)}</div>${x.value ? `<div class="s info-val">${esc(x.value)}</div>` : ""}</div>
+    ${x.value ? `<button class="btn ghost small" data-act="info-copy" data-id="${esc(x.id)}">${T("copy")}</button>` : ""}${delBtn("home_info", x.id)}</div>`;
+}
+// Monthly counts per person, worked out by the database (home_stats), so they cover every walk, not just the last ones loaded.
+const STAT_KINDS = [["chore", "✅"], ["walk", LOG_ICON.walk], ["food", LOG_ICON.food], ["med", LOG_ICON.med], ["trip", "🛒"]];
+async function loadStats(m) {
+  if (!sb || !navigator.onLine || loadStats.busy === m) return;
+  loadStats.busy = m;
+  const { data, error } = await sb.rpc("home_stats", { p_from: m + "-01", p_to: shiftMonth(m, 1) + "-01" });
+  loadStats.busy = null;
+  if (error) console.error(error);
+  ui.stats = { m, rows: error ? null : data || [] };
+  if (tab === "home") render();
+}
+function statsCard() {
+  const m = ui.homeMonth, st = ui.stats?.m === m ? ui.stats : null;
+  if (!st) loadStats(m);
+  const head = `<div class="cal-head"><button class="icon" data-act="hmon" data-n="-1" aria-label="${T("prevMonth")}">${IC.prev}</button>
+    <b>${esc(monthLabel(m))}</b><button class="icon" data-act="hmon" data-n="1" aria-label="${T("nextMonth")}" ${m >= today().slice(0, 7) ? "disabled" : ""}>${IC.next}</button></div>`;
+  if (!st || !st.rows) return `<div class="card stats-card">${head}<div class="empty">${T(!st ? (navigator.onLine ? "loadingStats" : "needsOnline") : "statsError")}</div></div>`;
+  const per = S.members.map(p => {
+    const row = k => st.rows.find(r => r.user_id === p.user_id && r.kind === k);
+    const counts = STAT_KINDS.map(([k]) => Number(row(k)?.n || 0));
+    return { p, counts, sum: counts.reduce((a, b) => a + b, 0), paid: Number(row("paid")?.amount || 0) };
+  });
+  const all = per.reduce((a, x) => a + x.sum, 0);
+  if (!all && !per.some(x => x.paid)) return `<div class="card stats-card">${head}<div class="empty">${T("noStats")}</div></div>`;
+  return `<div class="card stats-card">${head}<div class="list">${per.map(x => `<div class="row"><div class="main">
+      <div class="kv"><span class="t">${esc(x.p.user_id === me ? T("you_") : x.p.display_name || T("partner"))}</span><span class="s">${all ? Math.round(x.sum / all * 100) : 0}%</span></div>
+      <div class="bar"><i style="width:${all ? Math.round(x.sum / all * 100) : 0}%"></i></div>
+      <div class="s">${[...STAT_KINDS.map(([k, ic], j) => x.counts[j] ? `${ic} ${x.counts[j]} ${T("statLbl")[k]}` : ""), x.paid ? `💶 ${money(x.paid)}` : ""].filter(Boolean).map(esc).join(" · ") || "—"}</div>
+    </div></div>`).join("")}</div></div>`;
+}
+function viewHome() {
+  return `
+  ${papersSection("home", S.papers.filter(p => !p.dog_id).sort(byExpiry), T("papersH"), T("noPapers"))}
+  <p class="hint">${T("papersHint")}</p>
+  <section class="sec"><h2>${T("infoH")}</h2>
+    <div class="card list">${S.home_info.length ? S.home_info.map(infoRow).join("") : `<div class="empty">${T("noInfo")}</div>`}</div>
+    <form class="addbar" id="fInfo" style="margin-top:10px">
+      <input type="text" id="inLabel" placeholder="${esc(T("infoLabel"))}" aria-label="${esc(T("infoLabel"))}" required maxlength="40" autocomplete="off">
+      <input type="text" id="inValue" class="grow" placeholder="${esc(T("infoValue"))}" aria-label="${esc(T("infoValue"))}" maxlength="200" autocomplete="off">
+      <button class="btn">${T("add")}</button>
+    </form></section>
+  <section class="sec"><h2>${T("whoH")}</h2>${statsCard()}<p class="hint">${T("statsHint")}</p></section>`;
+}
+
+const VIEWS = { today: viewToday, groceries: viewShopping, money: viewMoney, chores: viewChores, calendar: viewCalendar, dogs: viewDogs, home: viewHome };
 
 // ---------- settings sheet ----------
 async function pushState() {
@@ -1074,7 +1282,7 @@ async function finishShopping() {
 
 // A copy of everything in this home, as a JSON file (the database rules limit it to this home).
 async function exportData() {
-  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "expenses", "fixed_costs", "budgets", "grocery_history"];
+  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "expenses", "fixed_costs", "budgets", "grocery_history"];
   const out = { app: "Home Together", version: running?.version || "dev", exported_at: new Date().toISOString() };
   for (const t of tables) {
     const { data, error } = await sb.from(t).select("*");
@@ -1148,7 +1356,7 @@ function render() {
   Object.entries(drafts).forEach(([id, v]) => { const el = document.getElementById(id); if (!el || id === "eDate") return; if (el.type === "checkbox") el.checked = v; else if (v !== "") el.value = v; });
   if (focusId) { const el = document.getElementById(focusId); if (el && el.closest("#view")) el.focus(); }
 }
-function setTab(t) { tab = VIEWS[t] ? t : "today"; pendingDelete = null; render(); window.scrollTo(0, 0); }
+function setTab(t) { tab = VIEWS[t] ? t : "today"; pendingDelete = null; if (tab === "home") ui.stats = null; render(); window.scrollTo(0, 0); }
 window.addEventListener("hashchange", () => setTab(location.hash.slice(1)));
 window.addEventListener("online", renderChrome); window.addEventListener("offline", renderChrome);
 
@@ -1172,7 +1380,7 @@ document.addEventListener("click", async ev => {
     case "del": pendingDelete = b.dataset.k; render(); return;
     case "del-yes": {
       const [t, i] = b.dataset.k.split("/"); pendingDelete = null;
-      const fk = { events: "event", shopping_trips: "trip", expenses: "expense" }[t]; if (fk) removeFilesOf(fk, i);
+      const fk = { events: "event", shopping_trips: "trip", expenses: "expense", papers: "paper" }[t]; if (fk) removeFilesOf(fk, i);
       if (t === "dogs") { const p = find(S.dogs, i)?.photo; if (p) sb.storage.from("files").remove([p]); }
       save({ t, kind: "delete", id: i }, "deleted"); return;
     }
@@ -1202,11 +1410,15 @@ document.addEventListener("click", async ev => {
     case "todo": {
       const t = find(S.chores, id); if (!t) return; const done = !t.done;
       save({ t: "chores", kind: "update", id, values: { done, done_by: done ? me : null }, notify: done ? ["todo_done", choreTitle(t)] : null });
+      // For "who did what": count it, or take it back when it is unticked.
+      if (done) save({ t: "chore_log", kind: "insert", values: { id: uuid(), chore_id: id, title: choreTitle(t) } });
+      else { const l = S.chore_log.find(x => x.chore_id === id && x.by_user === me); if (l) save({ t: "chore_log", kind: "delete", id: l.id }); }
       return;
     }
     case "did": {
       const c = find(S.chores, id); if (!c) return;
       save({ t: "chores", kind: "update", id, values: { last_done: today(), last_by: me }, notify: ["chore_done", choreTitle(c)] }, "markedDone");
+      save({ t: "chore_log", kind: "insert", values: { id: uuid(), chore_id: id, title: choreTitle(c) } });
       return;
     }
     case "who": {
@@ -1246,6 +1458,31 @@ document.addEventListener("click", async ev => {
     }
     case "mon": { const [y, m] = calMonth.split("-").map(Number); calMonth = ymd(new Date(y, m - 1 + Number(b.dataset.n), 1)).slice(0, 7); render(); return; }
     case "pick": calSel = b.dataset.d; calMonth = calSel.slice(0, 7); render(); return;
+    // Forms opened in place: the old one is removed first, because render() keeps typed values by id.
+    case "sup-add": $("#fSupply")?.remove(); ui.supEdit = "new"; render(); $("#suName")?.focus(); return;
+    case "sup-edit": $("#fSupply")?.remove(); ui.supEdit = id; render(); $("#suName")?.focus(); return;
+    case "sup-cancel": ui.supEdit = null; render(); return;
+    case "sup-new": save({ t: "dog_supplies", kind: "update", id, values: { opened_on: today(), alerted_on: null } }, "newBagSaved"); return;
+    case "paper-add": $("#fPaper")?.remove(); ui.paperEdit = { id: null, where: b.dataset.where }; render(); $("#paTitle")?.focus(); return;
+    case "paper-edit": $("#fPaper")?.remove(); ui.paperEdit = { id }; render(); $("#paTitle")?.focus(); return;
+    case "paper-cancel": ui.paperEdit = null; render(); return;
+    case "med-refill": {
+      const m = find(S.dog_meds, id); if (!m) return;
+      const ans = prompt(T("refillPrompt")(m.name), String(m.stock ?? "")); if (ans === null) return;
+      const n = parseInt(ans, 10); if (!(n >= 0)) { toast("badAmount"); return; }
+      save({ t: "dog_meds", kind: "update", id, values: { stock: n, low_alerted: false } }, "saved"); return;
+    }
+    case "info-copy": {
+      const x = find(S.home_info, id); if (!x) return;
+      try { await navigator.clipboard.writeText(x.value); toast("copied"); } catch (e) { toast(x.value); }
+      return;
+    }
+    case "hmon": ui.homeMonth = shiftMonth(ui.homeMonth, Number(b.dataset.n)); render(); return;
+    case "mgo": {
+      ui.moneyMonth = b.dataset.m;
+      const xd = $("#xDate"); if (xd) xd.value = ui.moneyMonth === today().slice(0, 7) ? today() : ui.moneyMonth + "-01"; // render() keeps typed values
+      render(); window.scrollTo(0, 0); return;
+    }
     case "close-settings": closeSettings(); return;
     case "open-settings": openSettings(); return;
     case "mantra-next": {
@@ -1284,6 +1521,13 @@ document.addEventListener("submit", async ev => {
     addGrocery(name, qty, ui.grocCat, store); $("#gName")?.focus();
   }
   if (f.id === "fChoreEdit") saveRoutine(f);
+  if (f.id === "fSupply") saveSupply(f);
+  if (f.id === "fPaper") savePaper(f);
+  if (f.id === "fInfo") {
+    const label = v("inLabel"), value = v("inValue"); if (!label) return;
+    $("#inLabel").value = ""; $("#inValue").value = "";
+    save({ t: "home_info", kind: "insert", values: { id: uuid(), label, value } }, "added");
+  }
   if (f.id === "fChore") {
     const title = v("cTitle"); if (!title) return; const every = Number(v("cEvery")), dog = $("#cDog").checked, w = v("cWho");
     $("#cTitle").value = ""; $("#cDog").checked = false;
