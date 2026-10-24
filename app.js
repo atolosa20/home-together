@@ -344,13 +344,28 @@ function moonPhase(d = new Date()) {
   const age = ((d.getTime() / 864e5 + 2440587.5 - 2451550.26) / 29.530588853 % 1 + 1) % 1;
   return Math.floor(age * 8 + 0.5) % 8;
 }
+// Zodiac sign (0 Aries … 11 Pisces) of the sun and the moon, from their positions along the ecliptic (accurate to well under a degree).
+const SIGN_ICONS = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"];
+function skySigns(t = new Date()) {
+  const d = t.getTime() / 864e5 - 10957.5, r = x => x * Math.PI / 180, sin = x => Math.sin(r(x));
+  const g = 357.529 + 0.98560028 * d;
+  const sun = 280.460 + 0.9856474 * d + 1.915 * sin(g) + 0.020 * sin(2 * g);
+  const M = 134.963 + 13.064993 * d, D = 297.850 + 12.190749 * d, F = 93.272 + 13.229350 * d;
+  const moon = 218.316 + 13.176396 * d + 6.289 * sin(M) + 1.274 * sin(2 * D - M) + 0.658 * sin(2 * D)
+    + 0.214 * sin(2 * M) - 0.186 * sin(g) - 0.114 * sin(2 * F);
+  const sign = lon => Math.floor((((lon % 360) + 360) % 360) / 30);
+  return { sun: sign(sun), moon: sign(moon) };
+}
 function mantraCard() {
   if (!mantraOn) return "";
   const i = chakraToday(), c = T("chakras")[i], p = moonPhase(), [moonName, moonTip] = T("moon")[p];
+  const sky = skySigns(), sun = T("signs")[sky.sun], moonSign = T("signs")[sky.moon];
   return `<button class="card mantra" data-act="mantra-next" aria-label="${esc(T("mantraNext"))}" style="--chakra:${CHAKRA_COLORS[i]}">
     <span class="mantra-meta"><i class="chakra-dot"></i>${T("chakraOf")}: ${esc(c.name)} · ${c.sk}</span>
     <q>${esc(c.lines[Math.floor(mantraAt * c.lines.length)])}</q>
-    <span class="mantra-moon">${MOON_ICONS[p]} ${esc(moonName)}: ${esc(moonTip)}</span></button>`;
+    <span class="mantra-moon">${MOON_ICONS[p]} ${esc(moonName)}: ${esc(moonTip)}</span>
+    <span class="mantra-moon">${SIGN_ICONS[sky.sun]}\uFE0E ${T("sunIn")} ${sun[0]}: ${sun[1]}.</span>
+    <span class="mantra-moon">${SIGN_ICONS[sky.moon]}\uFE0E ${T("moonIn")} ${moonSign[0]}: ${moonSign[2]}.</span></button>`;
 }
 function viewToday() {
   const d = dueNow(), meds = medsDueNow(), ev = upcoming(5), groc = S.groceries.filter(g => !g.done).length;
