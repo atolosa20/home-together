@@ -114,6 +114,13 @@ async function billsSoon(admin: SupabaseClient, householdId: string, today: stri
   return out;
 }
 
+// Plants to water today: every water_every days, or winter_every from November to March.
+async function plantsDue(admin: SupabaseClient, householdId: string, today: string) {
+  const winter = [11, 12, 1, 2, 3].includes(Number(today.slice(5, 7)));
+  const { data } = await admin.from("plants").select("name, water_every, winter_every, last_watered").eq("household_id", householdId);
+  return (data ?? []).filter((p) => !p.last_watered || addDays(p.last_watered, winter && p.winter_every ? p.winter_every : p.water_every) <= today).map((p) => p.name);
+}
+
 // Sunday: the last 7 days (walks, chores, shops, shared spending) and what comes in the next 7.
 async function weekly(admin: SupabaseClient, householdId: string, today: string) {
   const from = addDays(today, -6), to = addDays(today, 7), month = today.slice(0, 8) + "01";
@@ -200,10 +207,13 @@ Deno.serve(async (req) => {
         rain = spells(hours.filter((x) => x.t.startsWith(today) && x.t.slice(11, 13) >= "07" && x.t.slice(11, 13) < "22"));
       }
     }
-    const [low, papers, bills] = await Promise.all([runningLow(admin, h.id, today), papersDue(admin, h.id, today), billsSoon(admin, h.id, today)]);
+    const [low, papers, bills, water] = await Promise.all([runningLow(admin, h.id, today), papersDue(admin, h.id, today), billsSoon(admin, h.id, today), plantsDue(admin, h.id, today)]);
+    // Plants are only mentioned to those who didn't turn them off in Settings.
+    const { data: prefs } = await admin.from("members").select("user_id, notify_off").eq("household_id", h.id);
+    const noPlants = new Set((prefs ?? []).filter((m) => (m.notify_off ?? []).includes("plants")).map((m) => m.user_id));
     if (new Date(today + "T12:00:00Z").getUTCDay() === 0) sent += await weekly(admin, h.id, today);
     const news = due.length || events.length || medsDue.length || low.length || papers.length;
-    if (!news && !rain.length && !bills.length) continue; // nothing to say today
+    if (!news && !rain.length && !bills.length && !water.length) continue; // nothing to say today
 
     sent += await sendToHousehold(admin, h.id, (lang: Lang, userId: string) => {
       const es = lang === "es";
@@ -227,12 +237,14 @@ Deno.serve(async (req) => {
       }
       // Private fixed costs: only for whoever added them.
       const myBills = bills.filter((b) => !b.private || b.created_by === userId);
+      const myWater = noPlants.has(userId) ? [] : water;
+      if (myWater.length) parts.push((es ? "Regar: " : "Water: ") + myWater.slice(0, 5).join(", ") + (myWater.length > 5 ? ` +${myWater.length - 5}` : ""));
       if (myBills.length) {
         parts.push((es ? "Pagos: " : "Bills soon: ") + myBills.map((b) => `${b.name} ${eur(b.amount, lang)} ${es ? `en ${b.left} d` : `in ${b.left}d`}`).join(", "));
       }
       if (toBuy || low.length) parts.push(es ? `${(toBuy ?? 0) + low.length} por comprar` : `${(toBuy ?? 0) + low.length} to buy`);
       const rainForMe = rain.length > 0 && rainFor.has(userId);
-      if (!news && !rainForMe && !myBills.length) return null; // only rain or someone else's bills
+      if (!news && !rainForMe && !myBills.length && !myWater.length) return null; // only rain, someone else's bills or muted plants
       if (rainForMe) {
         const peak = Math.max(...rain.map((r) => r.peak));
         parts.push((es ? "Paseos: lluvia " : "Walks: rain ") + rain.slice(0, 3).map((r) => `${r.from}–${r.to}`).join(", ") + ` (${peak}${es ? " %" : "%"})`);

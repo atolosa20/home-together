@@ -80,10 +80,10 @@ const configured = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR-PROJECT"
 const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
 // ---------- state ----------
-const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], dog_weights: [], notes: [], fengshui: [], home: null };
+const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], dog_weights: [], notes: [], fengshui: [], plants: [], home: null };
 let me = null, hid = null, channel = null, online = true;
 let tab = "today", calMonth = today().slice(0, 7), calSel = today(), pendingDelete = null;
-const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null, fixedEdit: null, noteEdit: null, fsZone: null };
+const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null, fixedEdit: null, noteEdit: null, fsZone: null, plantEdit: null, plantPhoto: null };
 try {
   const g = localStorage.getItem("ht-grocCat"); if (GROC_KEYS.includes(g)) ui.grocCat = g;
   const s = localStorage.getItem("ht-shopView"); if (SHOP_VIEWS.includes(s)) ui.shopView = s;
@@ -132,7 +132,8 @@ const DEFAULTS = {
   fixed_costs: { cat: "bills", private: false, active: true, every_months: 1, remind_days: 3, reminded_for: null, last_month: null },
   dog_weights: {},
   notes: { title: "", body: "", pinned: false },
-  fengshui: { kind: "task", done: false, done_by: null, sort: 0 }
+  fengshui: { kind: "task", done: false, done_by: null, sort: 0 },
+  plants: { kind: "", room: "", zone: "", photo: null, water_every: 7, winter_every: null, last_watered: null, last_by: null, dog_safe: null, notes: "" }
 };
 function applyOp(op) {
   const list = S[op.t];
@@ -208,6 +209,7 @@ const TABLES = {
   dog_weights: () => sb.from("dog_weights").select("*").order("on_date").order("created_at"),
   notes: () => sb.from("notes").select("*").order("updated_at", { ascending: false }),
   fengshui: () => sb.from("fengshui").select("*").order("sort").order("created_at"),
+  plants: () => sb.from("plants").select("*").order("name"),
   history: () => sb.from("grocery_history").select("name_key, name, cat, store, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
 };
 async function load(name) {
@@ -216,7 +218,7 @@ async function load(name) {
   S[name] = data || [];
   queue.filter(op => op.t === name).forEach(applyOp); // changes still waiting to be sent
   render(); keepCopy();
-  if (name === "dogs") loadPhotos();
+  if (name === "dogs" || name === "plants") loadPhotos();
   if (name === "attachments" && ui.filesFor && !$("#settings").hidden) renderFiles();
 }
 async function loadHome() {
@@ -248,7 +250,7 @@ const reloadSoon = {};
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("home-" + hid);
-  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "fengshui"].forEach(t => {
+  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "fengshui", "plants"].forEach(t => {
     channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `household_id=eq.${hid}` }, () => {
       clearTimeout(reloadSoon[t]); reloadSoon[t] = setTimeout(() => load(t), 150);
     });
@@ -391,6 +393,7 @@ function headsUp() {
     ...suppliesLow().map(s => link("#food", LOG_ICON.food, s.name, supplyStatus(s))),
     ...S.dog_meds.filter(medLow).map(x => link("#health", LOG_ICON.med, `${dogName(x.dog_id)}: ${x.name}`, T("left")(x.stock))),
     ...papersSoon().map(p => paperRow(p, true)),
+    ...(plantsDue().length ? [link("#plants", "💧", T("toWater")(plantsDue().length), plantsDue().map(p => p.name).join(", "))] : []),
     ...budgets.map(([k, s, b]) => link("#money", "💶", T("expCats")[k], T("budgetUsed")(money(s), money(b), Math.round(s / b * 100)))),
   ];
   return rows.length ? `<section class="sec"><h2>${T("headsUp")}</h2><div class="card list">${rows.join("")}</div></section>` : "";
@@ -902,7 +905,7 @@ async function saveDog() {
   const isNew = ui.dogFor === "new", id = isNew ? uuid() : ui.dogFor, photo = ui.dogPhoto;
   closeSettings();
   const sent = await save(isNew ? { t: "dogs", kind: "insert", values: { id, ...values } } : { t: "dogs", kind: "update", id, values }, isNew ? "added" : "savedOk");
-  if (photo) sent ? uploadDogPhoto(id, photo) : toast("needsOnline");
+  if (photo) sent ? uploadPhoto("dogs", id, photo) : toast("needsOnline");
 }
 // Photos are made smaller on the phone first (about 900 px), so they load fast.
 async function shrink(file) {
@@ -914,21 +917,22 @@ async function shrink(file) {
     return blob ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : file;
   } catch (e) { return file; }
 }
-async function uploadDogPhoto(id, file) {
+// A dog's or a plant's photo (t = "dogs" or "plants"), made smaller first; the old one is removed.
+async function uploadPhoto(t, id, file) {
   if (!navigator.onLine) { toast("needsOnline"); return; }
   const small = await shrink(file);
   if (small.size > MAX_FILE) { toast("fileTooBig"); return; }
   const ext = small.type === "image/jpeg" ? "jpg" : (file.name.split(".").pop() || "img").toLowerCase();
-  const path = `${hid}/dog/${id}/${uuid()}.${ext}`;
+  const path = `${hid}/${t === "dogs" ? "dog" : "plant"}/${id}/${uuid()}.${ext}`;
   const up = await sb.storage.from("files").upload(path, small, { contentType: small.type || MIME_BY_EXT[ext] || "image/jpeg" });
   if (up.error) { console.error(up.error); toast("cantUpload"); return; }
-  const old = find(S.dogs, id)?.photo;
-  if (await save({ t: "dogs", kind: "update", id, values: { photo: path } })) { if (old) sb.storage.from("files").remove([old]); loadPhotos(); }
+  const old = find(S[t], id)?.photo;
+  if (await save({ t, kind: "update", id, values: { photo: path } })) { if (old) sb.storage.from("files").remove([old]); loadPhotos(); }
 }
 // Private photos are shown through signed links that last a few hours, made when the dogs load.
 const photoUrls = {};
 async function loadPhotos() {
-  const paths = S.dogs.map(d => d.photo).filter(p => p && !photoUrls[p]);
+  const paths = [...S.dogs, ...S.plants].map(d => d.photo).filter(p => p && !photoUrls[p]);
   if (!paths.length || !navigator.onLine) return;
   const { data } = await sb.storage.from("files").createSignedUrls(paths, 6 * 3600);
   (data || []).forEach(x => { if (x.signedUrl) photoUrls[x.path] = x.signedUrl; });
@@ -1468,6 +1472,7 @@ function fsZoneCard(z) {
     <p>${esc(info.about)}</p>
     ${feeds.length ? `<div><span class="eyebrow">${T("fsNourish")}</span>
       <p class="hint" style="margin:4px 0 6px">${esc(T("fsWhy")(T("fsEl")[own], T("fsEl")[FEEDS[own]]))}</p>${feeds.map(elBlock).join("")}</div>` : ""}
+    ${S.plants.some(p => p.zone === z) ? `<div><span class="eyebrow">${T("plantsHere")}</span>${S.plants.filter(p => p.zone === z).map(p => `<p class="fs-note"><b>🪴 ${esc(p.name)}</b>${tipHtml(plantTip(plantEl(p), z))}</p>`).join("")}</div>` : ""}
     ${notes.length ? `<div><span class="eyebrow">${T("fsInHome")}</span>${notes.map(x => `<p class="fs-note">${esc(x.text)}</p>`).join("")}</div>` : ""}
     <div><span class="eyebrow">${T("fsTodo")}</span>
       <div class="list">${tasks.length ? tasks.map(fsTaskRow).join("") : `<div class="hint" style="margin:4px 0">${T("fsNothing")}</div>`}</div>
@@ -1493,12 +1498,128 @@ function viewFengShui() {
       <div class="s">${esc(fmtSize(a.size))}${a.created_by ? ` · ${esc(T("addedBy")(who(a.created_by)))}` : ""}</div></div></div>`).join("") : `<div class="empty">${T("fsNoDocs")}</div>`}</div></section>`;
 }
 
-// Home: Spending · Papers · Info · Notes · Feng shui · Activity (who did what).
+
+// ---------- plants ----------
+// Common house plants: safe for dogs (ASPCA list) or not ("spines": not toxic, but they hurt), feng shui element
+// (soft leaves = wood, spiky or pointed = fire), and a starting point for watering: every N days / in winter.
+const PLANT_KINDS = {
+  spider: [true, "wood", 7, 12], calathea: [true, "wood", 5, 8], maranta: [true, "wood", 5, 8], fern: [true, "wood", 3, 6],
+  areca: [true, "wood", 7, 12], parlour: [true, "wood", 7, 14], peperomia: [true, "wood", 10, 14], pilea: [true, "wood", 7, 10],
+  pachira: [true, "wood", 10, 14], orchid: [true, "wood", 7, 14], christmas: [true, "wood", 10, 14], basil: [true, "wood", 2, 4],
+  haworthia: [true, "fire", 14, 28], rosemary: [true, "fire", 7, 14],
+  pothos: [false, "wood", 7, 12], monstera: [false, "wood", 7, 12], peacelily: [false, "wood", 5, 8], zz: [false, "wood", 14, 28],
+  ficus: [false, "wood", 7, 12], jade: [false, "wood", 14, 28], luckybamboo: [false, "wood", 7, 10], dieffenbachia: [false, "wood", 7, 12],
+  sansevieria: [false, "fire", 14, 30], aloe: [false, "fire", 14, 28], cactus: ["spines", "fire", 21, 45],
+};
+const PLANT_ROOMS = ["salon", "master", "hall", "entry", "kitchen", "room", "bath", "gallery", "outside"];
+// The bagua zones each room touches on the plan.
+const ROOM_ZONES = { salon: ["tierra", "lago", "fuego"], master: ["cielo", "lago", "agua"], hall: ["centro", "agua", "lago"], entry: ["fuego", "viento"],
+  kitchen: ["viento", "trueno", "fuego"], room: ["trueno", "montana", "viento"], bath: ["montana", "agua"], gallery: ["trueno"], outside: [] };
+const isWinter = () => [11, 12, 1, 2, 3].includes(new Date().getMonth() + 1);
+const plantEvery = p => isWinter() && p.winter_every ? p.winter_every : p.water_every;
+const plantDue = p => p.last_watered ? addDays(p.last_watered, plantEvery(p)) : today();
+const plantsDue = () => S.plants.filter(p => plantDue(p) <= today()).sort((a, b) => a.name.localeCompare(b.name));
+const plantEl = p => PLANT_KINDS[p.kind]?.[1] || "wood";
+const plantSafe = p => PLANT_KINDS[p.kind] ? PLANT_KINDS[p.kind][0] : p.dog_safe;
+const safeChip = s => s === true ? `<span class="chip ok">🐶 ${T("dogSafe")}</span>` : s === false ? `<span class="chip bad">⚠️ ${T("dogToxic")}</span>`
+  : s === "spines" ? `<span class="chip warn">🌵 ${T("dogSpines")}</span>` : "";
+// What the zone it stands in says about a plant (from the five elements and the study's advice).
+function plantTip(el, zone) {
+  if (!zone) return null;
+  if (zone === "centro") return ["warn", T("ptCentre")];
+  if (zone === "tierra") return ["warn", T(el === "fire" ? "ptEarthSpiky" : "ptEarthWood")];
+  if (zone === "agua") return ["warn", T("ptWater")];
+  if (el === "fire") return ["fuego", "montana"].includes(zone) ? ["ok", T("ptFireGood")] : ["info", T("ptNeutral")];
+  return ["trueno", "viento", "fuego"].includes(zone) ? ["ok", T("ptWoodGood")] : ["info", T("ptNeutral")];
+}
+const tipHtml = t => t ? `<div class="s ptip">${t[0] === "ok" ? "✅" : t[0] === "warn" ? "⚠️" : "ℹ️"} ${esc(t[1])}</div>` : "";
+function plantRow(p) {
+  if (ui.plantEdit === p.id) return plantForm(p);
+  const url = p.photo && photoUrls[p.photo];
+  const every = p.winter_every && p.winter_every !== p.water_every ? T("plantEveryW")(p.water_every, p.winter_every) : T("plantEvery")(p.water_every);
+  const sub = [PLANT_KINDS[p.kind] ? T("plantKinds")[p.kind] : "", p.zone ? T("fsZones")[p.zone]?.name : "", every,
+    p.last_watered ? T("wateredOn")(fmtDate(p.last_watered), p.last_by ? who(p.last_by) : "") : ""].filter(Boolean).map(esc).join(" · ");
+  return `<div class="row plant">
+    ${url ? `<img class="pav" src="${esc(url)}" alt="">` : `<span class="pav" aria-hidden="true">🪴</span>`}
+    <div class="main"><div class="t">${esc(p.name)} ${safeChip(plantSafe(p))}</div><div class="s">${sub}</div>${tipHtml(plantTip(plantEl(p), p.zone))}</div>
+    <div class="plant-actions">${duePill(plantDue(p))}<span class="grow"></span>
+      <button class="btn small" data-act="water" data-id="${esc(p.id)}" aria-label="${esc(T("waterIt")(p.name))}">💧 ${T("waterBtn")}</button>
+      <button class="btn ghost small" data-act="plant-edit" data-id="${esc(p.id)}">${T("editDog")}</button></div></div>`;
+}
+const zoneOptions = (room, sel) => {
+  const list = room && ROOM_ZONES[room]?.length ? ROOM_ZONES[room] : FS_ALL;
+  return `<option value="">—</option>${[...list, ...(sel && !list.includes(sel) ? [sel] : [])].map(z => `<option value="${z}" ${z === sel ? "selected" : ""}>${esc(T("fsZones")[z].name)}</option>`).join("")}`;
+};
+function kindHint(kind) {
+  const k = PLANT_KINDS[kind]; if (!k) return T("plantOtherHint");
+  return [k[0] === true ? T("dogSafeLong") : k[0] === false ? T("dogToxicLong") : T("dogSpinesLong"), T(k[1] === "fire" ? "elFireLeaves" : "elWoodLeaves"), T("plantEveryW")(k[2], k[3])].join(" · ");
+}
+function plantForm(p = {}) {
+  const name = k => T("plantKinds")[k], sorted = list => list.sort((a, b) => name(a).localeCompare(name(b)));
+  const all = Object.keys(PLANT_KINDS), safe = sorted(all.filter(k => PLANT_KINDS[k][0] === true)), other = sorted(all.filter(k => PLANT_KINDS[k][0] !== true));
+  const opt = k => `<option value="${k}" ${k === p.kind ? "selected" : ""}>${esc(name(k))}</option>`;
+  return `<form class="row edit-row" id="fPlant" data-id="${esc(p.id || "")}">
+    <input type="text" id="plName" value="${esc(p.name || "")}" placeholder="${esc(T("plantName"))}" aria-label="${esc(T("plantName"))}" required maxlength="60" autocomplete="off">
+    <div class="edit-grid">
+      <label class="inline"><span>${T("plantKind")}</span><select id="plKind"><option value="">${esc(T("plantOther"))}</option>
+        <optgroup label="${esc(T("dogSafeGroup"))}">${safe.map(opt).join("")}</optgroup><optgroup label="${esc(T("dogToxicGroup"))}">${other.map(opt).join("")}</optgroup></select></label>
+      <label class="inline"><span>${T("plantRoom")}</span><select id="plRoom"><option value="">—</option>${PLANT_ROOMS.map(r => `<option value="${r}" ${r === p.room ? "selected" : ""}>${esc(T("fsRooms")[r])}</option>`).join("")}</select></label>
+      <label class="inline"><span>${T("plantZone")}</span><select id="plZone">${zoneOptions(p.room, p.zone)}</select></label>
+      <label class="inline"><span>${T("plantWater")}</span><input type="number" id="plEvery" min="1" max="90" value="${p.water_every || 7}" required style="width:60px"><span>${T("plantDays")}</span></label>
+      <label class="inline"><span>${T("plantWinter")}</span><input type="number" id="plWinter" min="1" max="120" value="${p.winter_every || ""}" style="width:60px"><span>${T("plantDays")}</span></label>
+      <label class="inline" id="plSafeWrap" ${p.kind ? "hidden" : ""}><span>🐶</span><select id="plSafe">${[["", "dogUnknown"], ["1", "dogSafeLong"], ["0", "dogToxicLong"]].map(([v, k]) => `<option value="${v}" ${(p.dog_safe === true ? "1" : p.dog_safe === false ? "0" : "") === v ? "selected" : ""}>${esc(T(k))}</option>`).join("")}</select></label>
+      <label class="file-pick"><span>📷 ${T("photo")}</span><input type="file" id="plPhoto" accept="image/*"></label>
+    </div>
+    <div class="hint" id="plHint" style="margin:0">${esc(kindHint(p.kind))}</div>
+    <input type="text" id="plNotes" value="${esc(p.notes || "")}" placeholder="${esc(T("plantNotes"))}" aria-label="${esc(T("plantNotes"))}" autocomplete="off">
+    ${formButtons("plants", p.id, "plant-cancel")}
+  </form>`;
+}
+async function savePlant(f) {
+  const v = id => ($("#" + id)?.value || "").trim(), name = v("plName"); if (!name) return;
+  const kind = v("plKind"), safe = v("plSafe"), num = (x, max) => Math.min(max, Math.max(1, parseInt(x, 10) || 0)) || null;
+  const values = { name, kind, room: v("plRoom"), zone: v("plZone"), water_every: num(v("plEvery"), 90) || 7, winter_every: v("plWinter") ? num(v("plWinter"), 120) : null,
+    dog_safe: kind || safe === "" ? null : safe === "1", notes: v("plNotes") };
+  const old = f.dataset.id && find(S.plants, f.dataset.id), id = old ? old.id : uuid(), photo = ui.plantPhoto;
+  ui.plantEdit = null; ui.plantPhoto = null;
+  // A new plant counts from today: tap 💧 the next time it's watered.
+  const sent = await save(old ? { t: "plants", kind: "update", id, values } : { t: "plants", kind: "insert", values: { id, last_watered: today(), last_by: me, ...values } }, "saved");
+  if (photo) sent ? uploadPhoto("plants", id, photo) : toast("needsOnline");
+}
+// Watered: the date and who, and a line in "who did what".
+function waterPlants(list) {
+  list.forEach(p => {
+    save({ t: "plants", kind: "update", id: p.id, values: { last_watered: today(), last_by: me } });
+    save({ t: "chore_log", kind: "insert", values: { id: uuid(), title: "💧 " + p.name } });
+  });
+  if (list.length) toast(T("wateredToast")(list.length));
+}
+function viewPlants() {
+  const due = plantsDue(), adding = ui.plantEdit === "new";
+  const groups = [...PLANT_ROOMS, ""].map(r => [r, S.plants.filter(p => (PLANT_ROOMS.includes(p.room) ? p.room : "") === r).sort((a, b) => a.name.localeCompare(b.name))]).filter(g => g[1].length);
+  const ideas = Object.keys(PLANT_KINDS).filter(k => PLANT_KINDS[k][0] === true).sort((a, b) => T("plantKinds")[a].localeCompare(T("plantKinds")[b]));
+  return `
+  ${due.length ? `<div class="card water-card"><div class="main"><b>💧 ${esc(T("toWater")(due.length))}</b><div class="s">${esc(due.map(p => p.name).join(", "))}</div></div>
+    <button class="btn" data-act="water-all">${T("waterAll")}</button></div>` : ""}
+  <section class="sec"><div class="sec-head"><h2>${T("plantsH")}</h2>${adding ? "" : `<button class="btn small" data-act="plant-add">+ ${T("add")}</button>`}</div>
+    ${adding || !S.plants.length ? `<div class="card list">${adding ? plantForm() : `<div class="empty">${T("noPlants")}</div>`}</div>` : ""}
+    ${groups.map(([r, list]) => `<span class="eyebrow plant-room">${esc(r ? T("fsRooms")[r] : T("plantNoRoom"))}</span><div class="card list">${list.map(plantRow).join("")}</div>`).join("")}
+  </section>
+  <section class="sec"><h2>${T("plantIdeasH")}</h2><div class="card fs-zone">
+    <p class="hint" style="margin:0">${T("plantIdeasHint")}</p>
+    <div class="list">${ideas.map(k => `<div class="row"><span class="eldot el-${PLANT_KINDS[k][1]}"></span><div class="main"><div class="t">${esc(T("plantKinds")[k])}</div>
+      <div class="s">${esc(T(PLANT_KINDS[k][1] === "fire" ? "ideaFire" : "ideaWood"))}</div></div></div>`).join("")}</div>
+    <p class="hint" style="margin:0">⚠️ ${esc(T("plantToxicList"))}: ${esc(Object.keys(PLANT_KINDS).filter(k => PLANT_KINDS[k][0] === false).map(k => T("plantKinds")[k]).join(", "))}.</p>
+  </div></section>`;
+}
+
+// Home: Spending · Papers · Info · Notes · Feng shui · Plants · Activity (who did what).
 function viewHome() {
   const bar = subBar("home");
   if (sub.home === "money") return bar + viewMoney();
   if (sub.home === "notes") return bar + viewNotes();
   if (sub.home === "fengshui") return bar + viewFengShui();
+  if (sub.home === "plants") return bar + viewPlants();
   if (sub.home === "papers") return `${bar}
   ${papersSection("home", S.papers.filter(p => !p.dog_id).sort(byExpiry), T("papersH"), T("noPapers"))}
   <p class="hint">${T("papersHint")}</p>`;
@@ -1517,9 +1638,9 @@ function viewHome() {
 // ---------- tabs and their sections ----------
 // Five tabs; Agenda, Dogs and Home have sections picked with a switch at the top (remembered on this phone).
 // The old addresses (#chores, #calendar, #money… used by links and notifications) open the right section.
-const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "notes", "fengshui", "who"] };
+const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "notes", "fengshui", "plants", "who"] };
 const ALIAS = { chores: ["agenda", "chores"], calendar: ["agenda", "calendar"], money: ["home", "money"], walks: ["dogs", "dogtoday"], food: ["dogs", "food"], health: ["dogs", "health"], pack: ["dogs", "pack"],
-  papers: ["home", "papers"], info: ["home", "info"], notes: ["home", "notes"], fengshui: ["home", "fengshui"], who: ["home", "who"] };
+  papers: ["home", "papers"], info: ["home", "info"], notes: ["home", "notes"], fengshui: ["home", "fengshui"], plants: ["home", "plants"], who: ["home", "who"] };
 const sub = {};
 for (const t in SUBS) { let s = null; try { s = localStorage.getItem("ht-sub-" + t); } catch (e) {} sub[t] = SUBS[t].includes(s) ? s : SUBS[t][0]; }
 function setSub(t, s) {
@@ -1584,7 +1705,7 @@ async function renderSettings() {
   </div>`;
 }
 // Which notifications this person gets (members.notify_off; the server skips the topics turned off).
-const NOTIF_TOPICS = [["fromOther", ["list", "shop", "need", "calendar", "chores", "done", "dogs", "med", "note"]], ["remindersSum", ["reminders", "meds_due", "budget", "daily", "weekly"]]];
+const NOTIF_TOPICS = [["fromOther", ["list", "shop", "need", "calendar", "chores", "done", "dogs", "med", "note"]], ["remindersSum", ["reminders", "meds_due", "budget", "plants", "daily", "weekly"]]];
 function notifPrefs() {
   const off = S.members.find(m => m.user_id === me)?.notify_off || [];
   return `<details class="notif-prefs"><summary class="link">${T("notifChoose")}</summary>
@@ -1664,7 +1785,7 @@ async function finishShopping() {
 
 // A copy of everything in this home, as a JSON file (the database rules limit it to this home).
 async function exportData() {
-  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "fengshui", "expenses", "fixed_costs", "budgets", "grocery_history"];
+  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "fengshui", "plants", "expenses", "fixed_costs", "budgets", "grocery_history"];
   const out = { app: "Home Together", version: running?.version || "dev", exported_at: new Date().toISOString() };
   for (const t of tables) {
     const { data, error } = await sb.from(t).select("*");
@@ -1737,6 +1858,9 @@ function render() {
   $("#view").innerHTML = VIEWS[tab]();
   Object.entries(drafts).forEach(([id, v]) => { const el = document.getElementById(id); if (!el || id === "eDate") return; if (el.type === "checkbox") el.checked = v; else if (v !== "") el.value = v; });
   if (focusId) { const el = document.getElementById(focusId); if (el && el.closest("#view")) el.focus(); }
+  // A switch with many sections scrolls sideways: keep the chosen one in sight.
+  const on = $('#view .seg.many [aria-pressed="true"]');
+  if (on) on.parentElement.scrollLeft = on.offsetLeft - (on.parentElement.clientWidth - on.offsetWidth) / 2;
 }
 function setTab(t) {
   if (ALIAS[t]) { setSub(...ALIAS[t]); t = ALIAS[t][0]; }
@@ -1766,7 +1890,7 @@ document.addEventListener("click", async ev => {
     case "del-yes": {
       const [t, i] = b.dataset.k.split("/"); pendingDelete = null;
       const fk = { events: "event", shopping_trips: "trip", expenses: "expense", papers: "paper" }[t]; if (fk) removeFilesOf(fk, i);
-      if (t === "dogs") { const p = find(S.dogs, i)?.photo; if (p) sb.storage.from("files").remove([p]); }
+      if (t === "dogs" || t === "plants") { const p = find(S[t], i)?.photo; if (p) sb.storage.from("files").remove([p]); }
       save({ t, kind: "delete", id: i }, "deleted"); return;
     }
     case "shop-view": ui.shopView = b.dataset.v; ui.finishing = false; try { localStorage.setItem("ht-shopView", ui.shopView); } catch (e) {} render(); return;
@@ -1871,6 +1995,11 @@ document.addEventListener("click", async ev => {
     case "note-edit": $("#fNote")?.remove(); ui.noteEdit = id; render(); $("#noBody")?.focus(); return;
     case "note-cancel": ui.noteEdit = null; render(); return;
     case "note-tick": noteTick(id, Number(b.dataset.i)); return;
+    case "plant-add": $("#fPlant")?.remove(); ui.plantEdit = "new"; ui.plantPhoto = null; render(); $("#plName")?.focus(); return;
+    case "plant-edit": $("#fPlant")?.remove(); ui.plantEdit = id; ui.plantPhoto = null; render(); $("#plName")?.focus(); return;
+    case "plant-cancel": ui.plantEdit = null; ui.plantPhoto = null; render(); return;
+    case "water": { const p = find(S.plants, id); if (p) waterPlants([p]); return; }
+    case "water-all": waterPlants(plantsDue()); return;
     case "fs-zone": {
       ui.fsZone = b.dataset.z; render();
       if (b.closest("svg") || b.closest(".fs-chips")) $("#fsZone")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1952,6 +2081,7 @@ document.addEventListener("submit", async ev => {
   }
   if (f.id === "fFixed" || f.id === "fFixedEdit") saveFixed(f);
   if (f.id === "fNote") saveNote(f);
+  if (f.id === "fPlant") savePlant(f);
   if (f.id.startsWith("fFs-")) {
     const zone = f.dataset.zone, inp = $("#fsTask-" + zone), text = (inp?.value || "").trim(); if (!text) return;
     inp.value = "";
@@ -1976,6 +2106,14 @@ document.addEventListener("submit", async ev => {
 // File pickers: the receipt is kept aside so a live refresh of the list can't drop it.
 document.addEventListener("change", ev => {
   if (ev.target.id === "fReceipt") ui.receiptFiles = [...ev.target.files];
+  if (ev.target.id === "plPhoto") ui.plantPhoto = ev.target.files[0] || null;
+  // Picking a plant from the list fills in its watering and dog safety; picking a room offers the zones it touches.
+  if (ev.target.id === "plKind") {
+    const k = PLANT_KINDS[ev.target.value];
+    if (k) { $("#plEvery").value = k[2]; $("#plWinter").value = k[3]; if (!$("#plName").value.trim()) $("#plName").value = T("plantKinds")[ev.target.value]; }
+    $("#plSafeWrap").hidden = !!k; $("#plHint").textContent = kindHint(ev.target.value);
+  }
+  if (ev.target.id === "plRoom") $("#plZone").innerHTML = zoneOptions(ev.target.value, $("#plZone").value);
   if (ev.target.id === "mantraOn") {
     mantraOn = ev.target.checked; try { localStorage.setItem("ht-mantra", mantraOn ? "on" : "off"); } catch (e) {}
     render();

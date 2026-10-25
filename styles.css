@@ -403,3 +403,15 @@ a.row{text-decoration:none;color:inherit}
 .fsmap .door .swing{fill:none;stroke:var(--wall);stroke-width:2.5;stroke-dasharray:7 6;opacity:.7}
 .fsmap .door.main .leaf{stroke-width:7}
 .fsmap .zname,.fsmap .zel{paint-order:stroke;stroke:color-mix(in srgb,var(--surface) 80%,transparent);stroke-width:7px;stroke-linejoin:round}
+/* Plants */
+.plant .pav{width:42px;height:42px;border-radius:12px;object-fit:cover;flex:0 0 auto;display:grid;place-items:center;background:var(--ok-soft);font-size:1.3rem}
+.plant .ptip{margin-top:2px}
+.chip.ok{background:var(--ok-soft);color:var(--ink)} .chip.bad{background:var(--red-soft);color:var(--ink)} .chip.warn{background:var(--mustard-soft);color:var(--ink)}
+.water-card{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-top:12px;background:color-mix(in srgb,var(--el-water) 10%,var(--surface))}
+.water-card .main{flex:1;min-width:0}
+.plant-room{display:block;margin:14px 2px 6px}
+.edit-grid label.inline span + input + span{margin-left:4px}
+.row.plant{flex-wrap:wrap;align-items:flex-start}
+.row.plant .main{flex:1 1 0;min-width:0}
+.plant-actions{display:flex;align-items:center;gap:8px;width:100%;padding-left:54px}
+.plant-actions .grow{flex:1}
