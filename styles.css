@@ -342,9 +342,9 @@ a.row{text-decoration:none;color:inherit}
 .seg button{font-size:.86rem;padding:8px 2px}
 
 /* Feng shui: element colours (tints for the map), the plan, the zone card */
-:root{--el-wood:#3F8A4F; --el-fire:#D0503C; --el-earth:#B9832A; --el-metal:#7D8794; --el-water:#2F6FB0}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--el-wood:#6CC27E; --el-fire:#F0806E; --el-earth:#E2B055; --el-metal:#B6BFC9; --el-water:#6EA8E0}}
-:root[data-theme="dark"]{--el-wood:#6CC27E; --el-fire:#F0806E; --el-earth:#E2B055; --el-metal:#B6BFC9; --el-water:#6EA8E0}
+:root{--wall:#141414; --el-wood:#3F8A4F; --el-fire:#D0503C; --el-earth:#B9832A; --el-metal:#7D8794; --el-water:#2F6FB0}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--wall:#E9EEEC; --el-wood:#6CC27E; --el-fire:#F0806E; --el-earth:#E2B055; --el-metal:#B6BFC9; --el-water:#6EA8E0}}
+:root[data-theme="dark"]{--wall:#E9EEEC; --el-wood:#6CC27E; --el-fire:#F0806E; --el-earth:#E2B055; --el-metal:#B6BFC9; --el-water:#6EA8E0}
 .el-wood{--el:var(--el-wood)} .el-fire{--el:var(--el-fire)} .el-earth{--el:var(--el-earth)} .el-metal{--el:var(--el-metal)} .el-water{--el:var(--el-water)}
 .seg.many{overflow-x:auto;scrollbar-width:none;justify-content:flex-start}
 .seg.many::-webkit-scrollbar{display:none}
@@ -358,8 +358,8 @@ a.row{text-decoration:none;color:inherit}
 .fsmap .miss-bg{fill:color-mix(in srgb,var(--el-water) 18%,transparent)} .fsmap .miss-ln{stroke:var(--el-water);stroke-width:3;opacity:.55}
 .fsmap .extra-bg{fill:color-mix(in srgb,var(--el-fire) 14%,transparent)} .fsmap .extra-ln{stroke:var(--el-fire);stroke-width:3;opacity:.5}
 .fsmap .walls{pointer-events:none}
-.fsmap .room{fill:none;stroke:var(--muted);stroke-width:4;opacity:.45}
-.fsmap .outline{fill:none;stroke:var(--ink);stroke-width:9;stroke-linejoin:round}
+.fsmap .room{fill:none;stroke:var(--wall);stroke-width:9}
+.fsmap .outline{fill:none;stroke:var(--wall);stroke-width:16;stroke-linejoin:miter}
 .fsmap .names{pointer-events:none}
 .fsmap .rname{font-size:24px;fill:var(--muted);font-weight:600}
 .fsmap .zlabel{pointer-events:none}
@@ -396,3 +396,10 @@ a.row{text-decoration:none;color:inherit}
 .fs-note{border-left:3px solid var(--el,var(--line));padding:2px 0 2px 10px;margin-top:6px !important}
 .fs-add{margin-top:8px}
 .fs-rules{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.fsmap .openings{pointer-events:none}
+.fsmap .win line{stroke:var(--wall);stroke-width:3}
+.fsmap .win .glass{stroke:color-mix(in srgb,var(--el-water) 55%,var(--surface));stroke-width:6}
+.fsmap .door .leaf{stroke:var(--wall);stroke-width:5;stroke-linecap:round}
+.fsmap .door .swing{fill:none;stroke:var(--wall);stroke-width:2.5;stroke-dasharray:7 6;opacity:.7}
+.fsmap .door.main .leaf{stroke-width:7}
+.fsmap .zname,.fsmap .zel{paint-order:stroke;stroke:color-mix(in srgb,var(--surface) 80%,transparent);stroke-width:7px;stroke-linejoin:round}
