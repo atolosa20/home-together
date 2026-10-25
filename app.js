@@ -1348,26 +1348,37 @@ function viewNotes() {
 // study) and the extra one (red). What the study says for each zone is in the database (table fengshui).
 const PLAN = {
   w: 960, h: 1130, c: [482, 552], box: [95, 135, 870, 970],
+  // The bagua's rectangle (the zones are drawn inside it), and the flat's real outer walls, which leave out
+  // the light well (P.I.) and the corner by the stairs.
   outline: "M95 135H870V970H610V1100H425V970H95Z",
-  rooms: [["salon", 100, 140, 395, 435], ["master", 500, 140, 365, 330], ["hall", 500, 470, 255, 105], ["entry", 100, 580, 125, 280],
-    ["kitchen", 225, 580, 205, 385], ["room", 430, 580, 230, 385], ["bath", 660, 580, 205, 385], ["gallery", 425, 970, 185, 130]],
-  missing: ["M760 478H865V575H760Z", "M100 860H225L282 965H100Z"],
+  shell: "M95 135H870V472H757V578H870V970H610V1100H425V970H290L225 860H95Z",
+  // Inner walls [x1, y1, x2, y2], with the gaps for doors left out. Open passages: living room ↔ entrance,
+  // and hall ↔ the little corridor that leads to the bedroom and the bathroom.
+  walls: [[497, 135, 497, 472], [497, 472, 588, 472], [655, 472, 757, 472], [497, 472, 497, 492], [497, 562, 497, 578],
+    [225, 578, 662, 578], [225, 578, 225, 700], [225, 780, 225, 860], [430, 578, 430, 970],
+    [662, 578, 662, 600], [662, 660, 662, 970], [662, 708, 680, 708], [745, 708, 755, 708], [755, 578, 755, 708],
+    [430, 970, 445, 970], [520, 970, 610, 970]],
+  names: [["salon", 112, 172], ["master", 512, 172], ["hall", 578, 560], ["entry", 108, 612], ["kitchen", 240, 952],
+    ["room", 442, 952], ["bath", 674, 952], ["gallery", 437, 1088]],
+  missing: ["M757 472H870V578H757Z", "M95 860H225L290 970H95Z"],
   extra: ["M425 970H610V1100H425Z"],
   marks: { viento: "missing", agua: "missing", trueno: "extra" },
   // Labels placed by hand where walls or doors would cross them (otherwise 60% of the way to the outer wall).
-  labelAt: { fuego: [250, 470], agua: [790, 640], viento: [335, 850], montana: [760, 830] },
-  // Windows and open passages: a stretch of wall [x1, y1, x2, y2].
-  windows: [[245, 135, 395, 135], [685, 135, 845, 135], [300, 968, 385, 968], [780, 578, 850, 578], [445, 1100, 590, 1100]],
-  passages: [[108, 578, 218, 578], [668, 578, 755, 578]],
+  labelAt: { fuego: [250, 470], agua: [812, 640], viento: [335, 850], montana: [760, 830] },
+  // Windows in the outer walls: a stretch of wall [x1, y1, x2, y2].
+  windows: [[245, 135, 395, 135], [685, 135, 845, 135], [300, 970, 385, 970], [785, 578, 850, 578]],
   // Doors: hinge, the closed end of the leaf and the open end (the swing is the arc between them).
-  doors: [{ h: [130, 860], c: [205, 860], o: [130, 785], main: true }, { h: [225, 775], c: [225, 700], o: [300, 775] },
-    { h: [650, 470], c: [585, 470], o: [650, 405] }, { h: [500, 490], c: [500, 545], o: [555, 490] },
-    { h: [655, 580], c: [600, 580], o: [655, 635] }, { h: [680, 705], c: [745, 705], o: [680, 770] },
-    { h: [445, 965], c: [520, 965], o: [445, 890] }],
+  doors: [{ h: [130, 860], c: [205, 860], o: [130, 785], main: true }, // front door, into the entrance
+    { h: [225, 780], c: [225, 700], o: [305, 780] },  // entrance → kitchen
+    { h: [588, 472], c: [655, 472], o: [588, 405] },  // hall → main bedroom
+    { h: [497, 492], c: [497, 562], o: [567, 492] },  // living room → hall
+    { h: [662, 600], c: [662, 660], o: [602, 600] },  // corridor → bedroom
+    { h: [680, 708], c: [745, 708], o: [680, 773] },  // corridor → bathroom
+    { h: [445, 970], c: [520, 970], o: [445, 895] }], // bedroom → gallery
 };
-// Doors and windows: gaps cut into the walls (a mask), then the symbols drawn on top.
+// Windows and the front door are gaps cut into the outer walls (a mask); the symbols are drawn on top.
 function planOpenings() {
-  const gaps = [...PLAN.windows, ...PLAN.passages, ...PLAN.doors.map(d => [...d.h, ...d.c])]
+  const gaps = [...PLAN.windows, [...PLAN.doors[0].h, ...PLAN.doors[0].c]]
     .map(([x1, y1, x2, y2]) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join("");
   const win = ([x1, y1, x2, y2]) => {
     const v = x1 === x2, o = 5, a = v ? [o, 0] : [0, o];
@@ -1419,10 +1430,9 @@ function fsMap() {
       <text y="48" text-anchor="middle" class="zel">${esc(T("fsEl")[FS_EL[z]])}${mark ? (mark === "missing" ? " · −" : " · +") : ""}</text>
       ${n ? `<g transform="translate(34,-52)"><circle r="17" class="zbadge"/><text y="7" text-anchor="middle" class="zbadge-n">${n}</text></g>` : ""}</g>`;
   }).join("");
-  const rooms = PLAN.rooms.map(([k, x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" class="room"/>`).join("");
-  // Room names in a corner of each room (top or bottom), clear of the zone labels.
-  const BOTTOM = ["kitchen", "room", "bath", "gallery"];
-  const roomNames = PLAN.rooms.map(([k, x, y, w, h]) => `<text x="${x + 12}" y="${BOTTOM.includes(k) ? y + h - 14 : y + 30}" class="rname">${esc(T("fsRooms")[k])}</text>`).join("");
+  const inner = PLAN.walls.map(([x1, y1, x2, y2]) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join("");
+  // Room names in a corner of each room, clear of the zone labels.
+  const roomNames = PLAN.names.map(([k, x, y]) => `<text x="${x}" y="${y}" class="rname">${esc(T("fsRooms")[k])}</text>`).join("");
   const n = fsPending("centro"), op = planOpenings();
   return `<svg class="fsmap" viewBox="60 110 ${PLAN.w - 60} ${PLAN.h - 90}" role="group" aria-label="${esc(T("fsMapAria"))}">
     <defs><clipPath id="house"><path d="${PLAN.outline}"/></clipPath>
@@ -1431,7 +1441,7 @@ function fsMap() {
       <pattern id="hatchExtra" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(135)"><rect width="14" height="14" class="extra-bg"/><line x1="0" y1="0" x2="0" y2="14" class="extra-ln"/></pattern></defs>
     <g clip-path="url(#house)">${wedges}</g>
     ${PLAN.missing.map(d => `<path d="${d}" fill="url(#hatchMiss)" class="area"/>`).join("")}${PLAN.extra.map(d => `<path d="${d}" fill="url(#hatchExtra)" class="area"/>`).join("")}
-    <g class="walls" mask="url(#wallGaps)">${rooms}<path d="${PLAN.outline}" class="outline"/></g>
+    <g class="walls"><g class="inner">${inner}</g><path d="${PLAN.shell}" class="outline" mask="url(#wallGaps)"/></g>
     ${op.symbols}
     <g class="names">${roomNames}</g>
     ${labels}
