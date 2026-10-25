@@ -80,10 +80,10 @@ const configured = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR-PROJECT"
 const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
 // ---------- state ----------
-const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], dog_weights: [], notes: [], home: null };
+const S = { groceries: [], chores: [], events: [], dogs: [], members: [], history: [], needs: [], shopping_trips: [], attachments: [], dog_log: [], dog_meds: [], expenses: [], fixed_costs: [], budgets: [], dog_supplies: [], papers: [], home_info: [], chore_log: [], dog_weights: [], notes: [], fengshui: [], home: null };
 let me = null, hid = null, channel = null, online = true;
 let tab = "today", calMonth = today().slice(0, 7), calSel = today(), pendingDelete = null;
-const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null, fixedEdit: null, noteEdit: null };
+const ui = { grocCat: "other", evCat: "home", needCat: "other", shopView: "list", shopFilter: "", finishing: false, filesFor: null, medFor: null, dogFor: null, dogPhoto: null, moneyMonth: today().slice(0, 7), expCat: "groceries", authMode: "signin", setupMode: "create", homeMonth: today().slice(0, 7), supEdit: null, paperEdit: null, stats: null, fixedEdit: null, noteEdit: null, fsZone: null };
 try {
   const g = localStorage.getItem("ht-grocCat"); if (GROC_KEYS.includes(g)) ui.grocCat = g;
   const s = localStorage.getItem("ht-shopView"); if (SHOP_VIEWS.includes(s)) ui.shopView = s;
@@ -131,7 +131,8 @@ const DEFAULTS = {
   expenses: { cat: "other", note: "", store: "", private: false, trip_id: null, need_id: null, fixed_id: null, event_id: null },
   fixed_costs: { cat: "bills", private: false, active: true, every_months: 1, remind_days: 3, reminded_for: null, last_month: null },
   dog_weights: {},
-  notes: { title: "", body: "", pinned: false }
+  notes: { title: "", body: "", pinned: false },
+  fengshui: { kind: "task", done: false, done_by: null, sort: 0 }
 };
 function applyOp(op) {
   const list = S[op.t];
@@ -206,6 +207,7 @@ const TABLES = {
   chore_log: () => sb.from("chore_log").select("*").gte("at", today().slice(0, 7) + "-01").order("at", { ascending: false }),
   dog_weights: () => sb.from("dog_weights").select("*").order("on_date").order("created_at"),
   notes: () => sb.from("notes").select("*").order("updated_at", { ascending: false }),
+  fengshui: () => sb.from("fengshui").select("*").order("sort").order("created_at"),
   history: () => sb.from("grocery_history").select("name_key, name, cat, store, uses").order("uses", { ascending: false }).order("last_used", { ascending: false }).limit(40)
 };
 async function load(name) {
@@ -246,7 +248,7 @@ const reloadSoon = {};
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("home-" + hid);
-  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes"].forEach(t => {
+  ["groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_log", "dog_meds", "expenses", "fixed_costs", "budgets", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "fengshui"].forEach(t => {
     channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `household_id=eq.${hid}` }, () => {
       clearTimeout(reloadSoon[t]); reloadSoon[t] = setTimeout(() => load(t), 150);
     });
@@ -526,7 +528,7 @@ function viewNeeds() {
     <div class="card list">${done.map(row).join("")}</div></section>` : ""}`;
 }
 
-const FILE_COL = { event: "event_id", trip: "trip_id", expense: "expense_id", paper: "paper_id" };
+const FILE_COL = { event: "event_id", trip: "trip_id", expense: "expense_id", paper: "paper_id", fengshui: "section" };
 const filesOf = (kind, id) => S.attachments.filter(a => a[FILE_COL[kind]] === id);
 function clipBtn(kind, id, title) {
   const n = filesOf(kind, id).length;
@@ -1340,11 +1342,120 @@ function viewNotes() {
     <p class="hint">${T("notesHint")}</p></section>`;
 }
 
-// Home: Spending · Papers · Info · Notes · Activity (who did what).
+
+// ---------- feng shui: the bagua on the home's plan ----------
+// The plan of the flat, in the pixels of the study's drawing: walls, rooms, the missing areas (blue in the
+// study) and the extra one (red). What the study says for each zone is in the database (table fengshui).
+const PLAN = {
+  w: 960, h: 1130, c: [482, 552], box: [95, 135, 870, 970],
+  outline: "M95 135H870V970H610V1100H425V970H95Z",
+  rooms: [["salon", 100, 140, 395, 435], ["master", 500, 140, 365, 330], ["hall", 500, 470, 255, 105], ["entry", 100, 580, 125, 280],
+    ["kitchen", 225, 580, 205, 385], ["room", 430, 580, 230, 385], ["bath", 660, 580, 205, 385], ["gallery", 425, 970, 185, 130]],
+  missing: ["M760 478H865V575H760Z", "M100 860H225L282 965H100Z"],
+  extra: ["M425 970H610V1100H425Z"],
+  marks: { viento: "missing", agua: "missing", trueno: "extra" },
+};
+// The eight zones around the centre (angle of their middle, 0 = right, clockwise) as drawn on the study.
+const ZONES = [["lago", -90], ["cielo", -45], ["agua", 0], ["montana", 45], ["trueno", 90], ["viento", 135], ["fuego", 180], ["tierra", -135]];
+const FS_ALL = [...ZONES.map(z => z[0]), "centro"];
+// Each zone's own element, and the one that feeds it in the five-element cycle (water → wood → fire → earth → metal → water).
+const FS_EL = { trueno: "wood", viento: "wood", fuego: "fire", tierra: "earth", lago: "metal", cielo: "metal", agua: "water", montana: "earth", centro: "earth" };
+const FEEDS = { wood: "water", fire: "wood", earth: "fire", metal: "earth", water: "metal" };
+const TRIGRAM = { trueno: [1, 0, 0], viento: [0, 1, 1], fuego: [1, 0, 1], tierra: [0, 0, 0], lago: [1, 1, 0], cielo: [1, 1, 1], agua: [0, 1, 0], montana: [0, 0, 1] }; // bottom → top, 1 = solid
+const fsItems = (zone, kind) => S.fengshui.filter(x => x.zone === zone && x.kind === kind).sort((a, b) => a.sort - b.sort || (a.created_at || "").localeCompare(b.created_at || ""));
+const fsPending = zone => S.fengshui.filter(x => x.zone === zone && x.kind === "task" && !x.done).length;
+// A trigram as three bars (top first), solid or broken.
+const trigramHtml = (z, cls = "") => TRIGRAM[z] ? `<span class="trigram ${cls}" aria-hidden="true">${TRIGRAM[z].slice().reverse().map(l => `<i class="${l ? "" : "yin"}"></i>`).join("")}</span>` : "";
+
+// Where a ray from the centre at this angle leaves the main rectangle, to place the zone's label inside it.
+function rayToBox(deg) {
+  const [cx, cy] = PLAN.c, [x0, y0, x1, y1] = PLAN.box, a = deg * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
+  const t = Math.min(dx > 1e-9 ? (x1 - cx) / dx : dx < -1e-9 ? (x0 - cx) / dx : Infinity, dy > 1e-9 ? (y1 - cy) / dy : dy < -1e-9 ? (y0 - cy) / dy : Infinity);
+  return t;
+}
+function fsMap() {
+  const [cx, cy] = PLAN.c, R = 2000, sel = ui.fsZone;
+  const pt = (deg, r) => { const a = deg * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+  const wedges = ZONES.map(([z, deg]) => {
+    const p1 = pt(deg - 22.5, R), p2 = pt(deg + 22.5, R);
+    return `<polygon points="${cx},${cy} ${p1[0].toFixed(0)},${p1[1].toFixed(0)} ${p2[0].toFixed(0)},${p2[1].toFixed(0)}" class="wedge el-${FS_EL[z]} ${sel === z ? "sel" : ""}" data-act="fs-zone" data-z="${z}"><title>${esc(T("fsZones")[z].name)}</title></polygon>`;
+  }).join("");
+  const labels = ZONES.map(([z, deg]) => {
+    const [x, y] = pt(deg, rayToBox(deg) * 0.6), n = fsPending(z), mark = PLAN.marks[z];
+    const bars = TRIGRAM[z].slice().reverse().map((l, i) => l ? `<rect x="-26" y="${i * 14 - 46}" width="52" height="8" rx="2"/>` : `<rect x="-26" y="${i * 14 - 46}" width="22" height="8" rx="2"/><rect x="4" y="${i * 14 - 46}" width="22" height="8" rx="2"/>`).join("");
+    return `<g class="zlabel" transform="translate(${x.toFixed(0)},${y.toFixed(0)})">${bars}
+      <text y="20" text-anchor="middle" class="zname">${esc(T("fsZones")[z].name)}</text>
+      <text y="48" text-anchor="middle" class="zel">${esc(T("fsEl")[FS_EL[z]])}${mark ? (mark === "missing" ? " · −" : " · +") : ""}</text>
+      ${n ? `<g transform="translate(34,-52)"><circle r="17" class="zbadge"/><text y="7" text-anchor="middle" class="zbadge-n">${n}</text></g>` : ""}</g>`;
+  }).join("");
+  const rooms = PLAN.rooms.map(([k, x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" class="room"/>`).join("");
+  // Room names in a corner of each room (top or bottom), clear of the zone labels.
+  const BOTTOM = ["kitchen", "room", "bath", "gallery"];
+  const roomNames = PLAN.rooms.map(([k, x, y, w, h]) => `<text x="${x + 12}" y="${BOTTOM.includes(k) ? y + h - 14 : y + 30}" class="rname">${esc(T("fsRooms")[k])}</text>`).join("");
+  const n = fsPending("centro");
+  return `<svg class="fsmap" viewBox="60 110 ${PLAN.w - 60} ${PLAN.h - 90}" role="group" aria-label="${esc(T("fsMapAria"))}">
+    <defs><clipPath id="house"><path d="${PLAN.outline}"/></clipPath>
+      <pattern id="hatchMiss" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" class="miss-bg"/><line x1="0" y1="0" x2="0" y2="14" class="miss-ln"/></pattern>
+      <pattern id="hatchExtra" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(135)"><rect width="14" height="14" class="extra-bg"/><line x1="0" y1="0" x2="0" y2="14" class="extra-ln"/></pattern></defs>
+    <g clip-path="url(#house)">${wedges}</g>
+    ${PLAN.missing.map(d => `<path d="${d}" fill="url(#hatchMiss)" class="area"/>`).join("")}${PLAN.extra.map(d => `<path d="${d}" fill="url(#hatchExtra)" class="area"/>`).join("")}
+    <g class="walls">${rooms}<path d="${PLAN.outline}" class="outline"/></g>
+    <g class="names">${roomNames}</g>
+    ${labels}
+    <g data-act="fs-zone" data-z="centro" class="centre ${sel === "centro" ? "sel" : ""}"><circle cx="${cx}" cy="${cy}" r="34"/><title>${esc(T("fsZones").centro.name)}</title>
+      ${n ? `<circle cx="${cx + 30}" cy="${cy - 30}" r="15" class="zbadge"/><text x="${cx + 30}" y="${cy - 24}" text-anchor="middle" class="zbadge-n">${n}</text>` : ""}</g>
+  </svg>`;
+}
+function fsTaskRow(x) {
+  return `<div class="row ${x.done ? "done" : ""}">
+    <button class="check ${x.done ? "on" : ""}" data-act="fs-done" data-id="${esc(x.id)}" aria-pressed="${x.done}" aria-label="${esc(x.done ? T("putBack") : T("fsMarkDone"))}">${x.done ? IC.tick : ""}</button>
+    <div class="main"><div class="t">${esc(x.text)}</div>${x.done && x.done_by ? `<div class="s">${esc(T("doneBy")(who(x.done_by)))}</div>` : ""}</div>${delBtn("fengshui", x.id)}</div>`;
+}
+const fsAddForm = zone => `<form class="addbar fs-add" id="fFs-${zone}" data-zone="${zone}">
+    <input type="text" id="fsTask-${zone}" class="grow" placeholder="${esc(T("fsAddPh"))}" aria-label="${esc(T("fsAddPh"))}" required maxlength="200" autocomplete="off">
+    <button class="btn small">${T("add")}</button></form>`;
+function fsZoneCard(z) {
+  const info = T("fsZones")[z], own = FS_EL[z], mark = PLAN.marks[z], notes = fsItems(z, "note"), tasks = fsItems(z, "task");
+  const feeds = z === "centro" ? [] : [own, FEEDS[own]].filter((e, i, a) => a.indexOf(e) === i);
+  const elBlock = e => `<details class="fs-el"><summary><span class="eldot el-${e}"></span><b>${esc(T("fsEl")[e])}</b> <span class="s">${esc(T("fsElHint"))}</span></summary><p>${esc(T("fsElRep")[e])}</p></details>`;
+  return `<div class="card fs-zone el-${own}">
+    <div class="fs-head">${trigramHtml(z, "big")}<div><h3>${esc(info.name)}${lang === "en" ? ` <span class="s">${esc(info.es)}</span>` : ""}</h3>
+      <div class="s">${esc(info.area)}</div></div></div>
+    ${mark ? `<p class="fs-mark ${mark}">${esc(T(mark === "missing" ? "fsMissing" : "fsExtra"))}</p>` : ""}
+    <p>${esc(info.about)}</p>
+    ${feeds.length ? `<div><span class="eyebrow">${T("fsNourish")}</span>
+      <p class="hint" style="margin:4px 0 6px">${esc(T("fsWhy")(T("fsEl")[own], T("fsEl")[FEEDS[own]]))}</p>${feeds.map(elBlock).join("")}</div>` : ""}
+    ${notes.length ? `<div><span class="eyebrow">${T("fsInHome")}</span>${notes.map(x => `<p class="fs-note">${esc(x.text)}</p>`).join("")}</div>` : ""}
+    <div><span class="eyebrow">${T("fsTodo")}</span>
+      <div class="list">${tasks.length ? tasks.map(fsTaskRow).join("") : `<div class="hint" style="margin:4px 0">${T("fsNothing")}</div>`}</div>
+      ${fsAddForm(z)}</div>
+  </div>`;
+}
+function viewFengShui() {
+  if (!FS_ALL.includes(ui.fsZone)) ui.fsZone = FS_ALL.find(fsPending) || "centro";
+  const tasks = S.fengshui.filter(x => x.kind === "task"), done = tasks.filter(x => x.done).length;
+  const personal = fsItems("personal", "note"), ptasks = fsItems("personal", "task"), docs = filesOf("fengshui", "fengshui");
+  return `<section class="sec"><div class="sec-head"><h2>${T("fsH")}</h2>${tasks.length ? `<span class="eyebrow">${esc(T("fsProgress")(done, tasks.length))}</span>` : ""}</div>
+    <div class="card fs-map-card">${fsMap()}
+      <div class="fs-legend"><span><i class="lg miss"></i>${T("fsLegendMiss")}</span><span><i class="lg extra"></i>${T("fsLegendExtra")}</span><span>${T("fsTapZone")}</span></div>
+      <div class="often fs-chips" role="group" aria-label="${esc(T("fsZonesLbl"))}">${FS_ALL.map(z => `<button class="chip-btn" data-act="fs-zone" data-z="${z}" aria-pressed="${ui.fsZone === z}"><span class="eldot el-${FS_EL[z]}"></span>${esc(T("fsZones")[z].name)}${fsPending(z) ? ` <small>${fsPending(z)}</small>` : ""}</button>`).join("")}</div>
+    </div></section>
+  <section class="sec" id="fsZone">${fsZoneCard(ui.fsZone)}</section>
+  ${personal.length || ptasks.length ? `<section class="sec"><h2>${T("fsPersonal")}</h2><div class="card fs-zone">
+    ${personal.map(x => `<p class="fs-note">${esc(x.text)}</p>`).join("")}${ptasks.length ? `<div class="list">${ptasks.map(fsTaskRow).join("")}</div>` : ""}
+    <p class="hint" style="margin:0">${T("fsPersonalHint")}</p></div></section>` : ""}
+  <section class="sec"><h2>${T("fsRulesH")}</h2><div class="card fs-zone"><ul class="fs-rules">${T("fsRules").map(r => `<li>${esc(r)}</li>`).join("")}</ul></div></section>
+  <section class="sec"><div class="sec-head"><h2>${T("fsDocs")}</h2><button class="btn small" data-act="files" data-kind="fengshui" data-id="fengshui" data-title="${esc(T("fsH"))}">${T(docs.length ? "fsDocsManage" : "addFile")}</button></div>
+    <div class="card list">${docs.length ? docs.map(a => `<div class="row"><span class="log-ic">📄</span><div class="main"><button class="file-open" data-act="open-file" data-path="${esc(a.path)}">${esc(a.name)}</button>
+      <div class="s">${esc(fmtSize(a.size))}${a.created_by ? ` · ${esc(T("addedBy")(who(a.created_by)))}` : ""}</div></div></div>`).join("") : `<div class="empty">${T("fsNoDocs")}</div>`}</div></section>`;
+}
+
+// Home: Spending · Papers · Info · Notes · Feng shui · Activity (who did what).
 function viewHome() {
   const bar = subBar("home");
   if (sub.home === "money") return bar + viewMoney();
   if (sub.home === "notes") return bar + viewNotes();
+  if (sub.home === "fengshui") return bar + viewFengShui();
   if (sub.home === "papers") return `${bar}
   ${papersSection("home", S.papers.filter(p => !p.dog_id).sort(byExpiry), T("papersH"), T("noPapers"))}
   <p class="hint">${T("papersHint")}</p>`;
@@ -1363,9 +1474,9 @@ function viewHome() {
 // ---------- tabs and their sections ----------
 // Five tabs; Agenda, Dogs and Home have sections picked with a switch at the top (remembered on this phone).
 // The old addresses (#chores, #calendar, #money… used by links and notifications) open the right section.
-const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "notes", "who"] };
+const SUBS = { agenda: ["chores", "calendar"], dogs: ["dogtoday", "food", "health", "pack"], home: ["money", "papers", "info", "notes", "fengshui", "who"] };
 const ALIAS = { chores: ["agenda", "chores"], calendar: ["agenda", "calendar"], money: ["home", "money"], walks: ["dogs", "dogtoday"], food: ["dogs", "food"], health: ["dogs", "health"], pack: ["dogs", "pack"],
-  papers: ["home", "papers"], info: ["home", "info"], notes: ["home", "notes"], who: ["home", "who"] };
+  papers: ["home", "papers"], info: ["home", "info"], notes: ["home", "notes"], fengshui: ["home", "fengshui"], who: ["home", "who"] };
 const sub = {};
 for (const t in SUBS) { let s = null; try { s = localStorage.getItem("ht-sub-" + t); } catch (e) {} sub[t] = SUBS[t].includes(s) ? s : SUBS[t][0]; }
 function setSub(t, s) {
@@ -1373,7 +1484,7 @@ function setSub(t, s) {
   sub[t] = s; try { localStorage.setItem("ht-sub-" + t, s); } catch (e) {}
   if (s === "who") ui.stats = null; // fresh counts each time
 }
-const subBar = t => `<div class="seg" role="tablist">${SUBS[t].map(s => `<button type="button" role="tab" data-act="sub" data-t="${t}" data-v="${s}" aria-pressed="${sub[t] === s}" aria-selected="${sub[t] === s}">${esc(T("subs")[s])}${s === "chores" && dueNow().length ? ` <span class="count">${dueNow().length}</span>` : ""}</button>`).join("")}</div>`;
+const subBar = t => `<div class="seg ${SUBS[t].length > 5 ? "many" : ""}" role="tablist">${SUBS[t].map(s => `<button type="button" role="tab" data-act="sub" data-t="${t}" data-v="${s}" aria-pressed="${sub[t] === s}" aria-selected="${sub[t] === s}">${esc(T("subs")[s])}${s === "chores" && dueNow().length ? ` <span class="count">${dueNow().length}</span>` : ""}</button>`).join("")}</div>`;
 const viewAgenda = () => subBar("agenda") + (sub.agenda === "calendar" ? viewCalendar() : viewChores());
 
 const VIEWS = { today: viewToday, groceries: viewShopping, agenda: viewAgenda, dogs: viewDogs, home: viewHome };
@@ -1510,7 +1621,7 @@ async function finishShopping() {
 
 // A copy of everything in this home, as a JSON file (the database rules limit it to this home).
 async function exportData() {
-  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "expenses", "fixed_costs", "budgets", "grocery_history"];
+  const tables = ["households", "members", "groceries", "chores", "events", "dogs", "needs", "shopping_trips", "attachments", "dog_meds", "dog_log", "dog_supplies", "papers", "home_info", "chore_log", "dog_weights", "notes", "fengshui", "expenses", "fixed_costs", "budgets", "grocery_history"];
   const out = { app: "Home Together", version: running?.version || "dev", exported_at: new Date().toISOString() };
   for (const t of tables) {
     const { data, error } = await sb.from(t).select("*");
@@ -1717,6 +1828,12 @@ document.addEventListener("click", async ev => {
     case "note-edit": $("#fNote")?.remove(); ui.noteEdit = id; render(); $("#noBody")?.focus(); return;
     case "note-cancel": ui.noteEdit = null; render(); return;
     case "note-tick": noteTick(id, Number(b.dataset.i)); return;
+    case "fs-zone": {
+      ui.fsZone = b.dataset.z; render();
+      if (b.closest("svg") || b.closest(".fs-chips")) $("#fsZone")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    case "fs-done": { const x = find(S.fengshui, id); if (!x) return; save({ t: "fengshui", kind: "update", id, values: { done: !x.done, done_by: x.done ? null : me } }); return; }
     case "mgo": {
       ui.moneyMonth = b.dataset.m;
       const xd = $("#xDate"); if (xd) xd.value = ui.moneyMonth === today().slice(0, 7) ? today() : ui.moneyMonth + "-01"; // render() keeps typed values
@@ -1792,6 +1909,11 @@ document.addEventListener("submit", async ev => {
   }
   if (f.id === "fFixed" || f.id === "fFixedEdit") saveFixed(f);
   if (f.id === "fNote") saveNote(f);
+  if (f.id.startsWith("fFs-")) {
+    const zone = f.dataset.zone, inp = $("#fsTask-" + zone), text = (inp?.value || "").trim(); if (!text) return;
+    inp.value = "";
+    save({ t: "fengshui", kind: "insert", values: { id: uuid(), zone, kind: "task", text, sort: fsItems(zone, "task").length + 1 } }, "added");
+  }
   if (f.id.startsWith("fWeight-")) saveWeight(f);
   if (f.id === "fNeed") {
     const title = v("nTitle"); if (!title) return; ui.needCat = v("nCat");

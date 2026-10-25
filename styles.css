@@ -340,3 +340,59 @@ a.row{text-decoration:none;color:inherit}
 .notif-prefs .eyebrow{display:block;margin-top:8px}
 .notif-prefs .toggle{display:flex}
 .seg button{font-size:.86rem;padding:8px 2px}
+
+/* Feng shui: element colours (tints for the map), the plan, the zone card */
+:root{--el-wood:#3F8A4F; --el-fire:#D0503C; --el-earth:#B9832A; --el-metal:#7D8794; --el-water:#2F6FB0}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--el-wood:#6CC27E; --el-fire:#F0806E; --el-earth:#E2B055; --el-metal:#B6BFC9; --el-water:#6EA8E0}}
+:root[data-theme="dark"]{--el-wood:#6CC27E; --el-fire:#F0806E; --el-earth:#E2B055; --el-metal:#B6BFC9; --el-water:#6EA8E0}
+.el-wood{--el:var(--el-wood)} .el-fire{--el:var(--el-fire)} .el-earth{--el:var(--el-earth)} .el-metal{--el:var(--el-metal)} .el-water{--el:var(--el-water)}
+.seg.many{overflow-x:auto;scrollbar-width:none;justify-content:flex-start}
+.seg.many::-webkit-scrollbar{display:none}
+.seg.many button{flex:1 0 auto;padding:8px 10px;overflow:visible}
+.fs-map-card{padding:10px;display:flex;flex-direction:column;gap:8px}
+.fsmap{width:100%;height:auto;display:block;touch-action:manipulation}
+.fsmap .wedge{fill:color-mix(in srgb,var(--el) 16%,var(--surface));stroke:var(--surface);stroke-width:3;cursor:pointer;transition:fill .15s}
+.fsmap .wedge:hover{fill:color-mix(in srgb,var(--el) 26%,var(--surface))}
+.fsmap .wedge.sel{fill:color-mix(in srgb,var(--el) 38%,var(--surface))}
+.fsmap .area{pointer-events:none}
+.fsmap .miss-bg{fill:color-mix(in srgb,var(--el-water) 18%,transparent)} .fsmap .miss-ln{stroke:var(--el-water);stroke-width:3;opacity:.55}
+.fsmap .extra-bg{fill:color-mix(in srgb,var(--el-fire) 14%,transparent)} .fsmap .extra-ln{stroke:var(--el-fire);stroke-width:3;opacity:.5}
+.fsmap .walls{pointer-events:none}
+.fsmap .room{fill:none;stroke:var(--muted);stroke-width:4;opacity:.45}
+.fsmap .outline{fill:none;stroke:var(--ink);stroke-width:9;stroke-linejoin:round}
+.fsmap .names{pointer-events:none}
+.fsmap .rname{font-size:24px;fill:var(--muted);font-weight:600}
+.fsmap .zlabel{pointer-events:none}
+.fsmap .zlabel rect{fill:var(--ink)}
+.fsmap .zname{font-family:var(--display);font-size:34px;font-weight:700;fill:var(--ink)}
+.fsmap .zel{font-size:24px;font-weight:700;fill:var(--muted)}
+.fsmap .zbadge{fill:var(--mustard);stroke:var(--surface);stroke-width:3}
+.fsmap .zbadge-n{font-size:22px;font-weight:800;fill:#17302B}
+.fsmap .centre{cursor:pointer}
+.fsmap .centre>circle:first-of-type{fill:var(--surface);stroke:var(--el-earth);stroke-width:5}
+.fsmap .centre.sel>circle:first-of-type{fill:color-mix(in srgb,var(--el-earth) 40%,var(--surface))}
+.fs-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.78rem;color:var(--muted);padding:0 4px}
+.fs-legend .lg{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.fs-legend .lg.miss{background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--el-water) 55%,transparent) 0 3px,transparent 3px 6px);border:1px solid var(--el-water)}
+.fs-legend .lg.extra{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--el-fire) 55%,transparent) 0 3px,transparent 3px 6px);border:1px solid var(--el-fire)}
+.fs-chips{margin-top:2px}
+.eldot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--el);margin-right:6px;vertical-align:1px}
+.fs-zone{padding:14px;display:flex;flex-direction:column;gap:12px;border-top:4px solid var(--el,var(--line))}
+.fs-zone p{margin:0}
+.fs-zone h3{font-family:var(--display);font-size:1.2rem;margin:0}
+.fs-zone h3 .s{font-family:var(--body);font-size:.85rem;font-weight:600}
+.fs-head{display:flex;gap:12px;align-items:center}
+.trigram{display:inline-flex;flex-direction:column;gap:3px;flex:0 0 auto}
+.trigram i{display:block;width:26px;height:5px;border-radius:2px;background:var(--ink)}
+.trigram i.yin{background:linear-gradient(90deg,var(--ink) 0 42%,transparent 42% 58%,var(--ink) 58%)}
+.trigram.big i{width:38px;height:7px}
+.trigram.big{gap:5px;padding:8px;border-radius:10px;background:color-mix(in srgb,var(--el,var(--line)) 18%,var(--surface))}
+.fs-mark{font-size:.85rem;font-weight:700;border-radius:10px;padding:8px 10px}
+.fs-mark.missing{background:color-mix(in srgb,var(--el-water) 14%,var(--surface))}
+.fs-mark.extra{background:color-mix(in srgb,var(--el-fire) 12%,var(--surface))}
+.fs-el{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:6px}
+.fs-el summary{cursor:pointer;list-style-position:inside}
+.fs-el p{margin-top:6px;font-size:.9rem}
+.fs-note{border-left:3px solid var(--el,var(--line));padding:2px 0 2px 10px;margin-top:6px !important}
+.fs-add{margin-top:8px}
+.fs-rules{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
