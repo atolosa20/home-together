@@ -358,7 +358,7 @@ a.row{text-decoration:none;color:inherit}
 .fsmap .miss-bg{fill:color-mix(in srgb,var(--el-water) 18%,transparent)} .fsmap .miss-ln{stroke:var(--el-water);stroke-width:3;opacity:.55}
 .fsmap .extra-bg{fill:color-mix(in srgb,var(--el-fire) 14%,transparent)} .fsmap .extra-ln{stroke:var(--el-fire);stroke-width:3;opacity:.5}
 .fsmap .walls{pointer-events:none}
-.fsmap .room{fill:none;stroke:var(--wall);stroke-width:9}
+.fsmap .inner line{stroke:var(--wall);stroke-width:10;stroke-linecap:square}
 .fsmap .outline{fill:none;stroke:var(--wall);stroke-width:16;stroke-linejoin:miter}
 .fsmap .names{pointer-events:none}
 .fsmap .rname{font-size:24px;fill:var(--muted);font-weight:600}
