@@ -1354,7 +1354,38 @@ const PLAN = {
   missing: ["M760 478H865V575H760Z", "M100 860H225L282 965H100Z"],
   extra: ["M425 970H610V1100H425Z"],
   marks: { viento: "missing", agua: "missing", trueno: "extra" },
+  // Labels placed by hand where walls or doors would cross them (otherwise 60% of the way to the outer wall).
+  labelAt: { fuego: [250, 470], agua: [790, 640], viento: [335, 850], montana: [760, 830] },
+  // Windows and open passages: a stretch of wall [x1, y1, x2, y2].
+  windows: [[245, 135, 395, 135], [685, 135, 845, 135], [300, 968, 385, 968], [780, 578, 850, 578], [445, 1100, 590, 1100]],
+  passages: [[108, 578, 218, 578], [668, 578, 755, 578]],
+  // Doors: hinge, the closed end of the leaf and the open end (the swing is the arc between them).
+  doors: [{ h: [130, 860], c: [205, 860], o: [130, 785], main: true }, { h: [225, 775], c: [225, 700], o: [300, 775] },
+    { h: [650, 470], c: [585, 470], o: [650, 405] }, { h: [500, 490], c: [500, 545], o: [555, 490] },
+    { h: [655, 580], c: [600, 580], o: [655, 635] }, { h: [680, 705], c: [745, 705], o: [680, 770] },
+    { h: [445, 965], c: [520, 965], o: [445, 890] }],
 };
+// Doors and windows: gaps cut into the walls (a mask), then the symbols drawn on top.
+function planOpenings() {
+  const gaps = [...PLAN.windows, ...PLAN.passages, ...PLAN.doors.map(d => [...d.h, ...d.c])]
+    .map(([x1, y1, x2, y2]) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join("");
+  const win = ([x1, y1, x2, y2]) => {
+    const v = x1 === x2, o = 5, a = v ? [o, 0] : [0, o];
+    return `<g class="win"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="glass"/>
+      <line x1="${x1 - a[0]}" y1="${y1 - a[1]}" x2="${x2 - a[0]}" y2="${y2 - a[1]}"/><line x1="${x1 + a[0]}" y1="${y1 + a[1]}" x2="${x2 + a[0]}" y2="${y2 + a[1]}"/>
+      <line x1="${v ? x1 - 9 : x1}" y1="${v ? y1 : y1 - 9}" x2="${v ? x1 + 9 : x1}" y2="${v ? y1 : y1 + 9}"/><line x1="${v ? x2 - 9 : x2}" y1="${v ? y2 : y2 - 9}" x2="${v ? x2 + 9 : x2}" y2="${v ? y2 : y2 + 9}"/></g>`;
+  };
+  const door = d => {
+    const r = Math.hypot(d.c[0] - d.h[0], d.c[1] - d.h[1]);
+    // Sweep direction: which way the leaf turns from closed to open.
+    const sweep = (d.c[0] - d.h[0]) * (d.o[1] - d.h[1]) - (d.c[1] - d.h[1]) * (d.o[0] - d.h[0]) > 0 ? 1 : 0;
+    return `<g class="door ${d.main ? "main" : ""}"><path d="M${d.c[0]} ${d.c[1]}A${r} ${r} 0 0 ${sweep} ${d.o[0]} ${d.o[1]}" class="swing"/>
+      <line x1="${d.h[0]}" y1="${d.h[1]}" x2="${d.o[0]}" y2="${d.o[1]}" class="leaf"/></g>`;
+  };
+  return { mask: `<mask id="wallGaps" maskUnits="userSpaceOnUse" x="0" y="0" width="${PLAN.w}" height="${PLAN.h + 40}">
+      <rect width="${PLAN.w}" height="${PLAN.h + 40}" fill="#fff"/><g stroke="#000" stroke-width="26" stroke-linecap="butt">${gaps}</g></mask>`,
+    symbols: `<g class="openings">${PLAN.windows.map(win).join("")}${PLAN.doors.map(door).join("")}</g>` };
+}
 // The eight zones around the centre (angle of their middle, 0 = right, clockwise) as drawn on the study.
 const ZONES = [["lago", -90], ["cielo", -45], ["agua", 0], ["montana", 45], ["trueno", 90], ["viento", 135], ["fuego", 180], ["tierra", -135]];
 const FS_ALL = [...ZONES.map(z => z[0]), "centro"];
@@ -1381,7 +1412,7 @@ function fsMap() {
     return `<polygon points="${cx},${cy} ${p1[0].toFixed(0)},${p1[1].toFixed(0)} ${p2[0].toFixed(0)},${p2[1].toFixed(0)}" class="wedge el-${FS_EL[z]} ${sel === z ? "sel" : ""}" data-act="fs-zone" data-z="${z}"><title>${esc(T("fsZones")[z].name)}</title></polygon>`;
   }).join("");
   const labels = ZONES.map(([z, deg]) => {
-    const [x, y] = pt(deg, rayToBox(deg) * 0.6), n = fsPending(z), mark = PLAN.marks[z];
+    const [x, y] = PLAN.labelAt[z] || pt(deg, rayToBox(deg) * 0.6), n = fsPending(z), mark = PLAN.marks[z];
     const bars = TRIGRAM[z].slice().reverse().map((l, i) => l ? `<rect x="-26" y="${i * 14 - 46}" width="52" height="8" rx="2"/>` : `<rect x="-26" y="${i * 14 - 46}" width="22" height="8" rx="2"/><rect x="4" y="${i * 14 - 46}" width="22" height="8" rx="2"/>`).join("");
     return `<g class="zlabel" transform="translate(${x.toFixed(0)},${y.toFixed(0)})">${bars}
       <text y="20" text-anchor="middle" class="zname">${esc(T("fsZones")[z].name)}</text>
@@ -1392,14 +1423,16 @@ function fsMap() {
   // Room names in a corner of each room (top or bottom), clear of the zone labels.
   const BOTTOM = ["kitchen", "room", "bath", "gallery"];
   const roomNames = PLAN.rooms.map(([k, x, y, w, h]) => `<text x="${x + 12}" y="${BOTTOM.includes(k) ? y + h - 14 : y + 30}" class="rname">${esc(T("fsRooms")[k])}</text>`).join("");
-  const n = fsPending("centro");
+  const n = fsPending("centro"), op = planOpenings();
   return `<svg class="fsmap" viewBox="60 110 ${PLAN.w - 60} ${PLAN.h - 90}" role="group" aria-label="${esc(T("fsMapAria"))}">
     <defs><clipPath id="house"><path d="${PLAN.outline}"/></clipPath>
       <pattern id="hatchMiss" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" class="miss-bg"/><line x1="0" y1="0" x2="0" y2="14" class="miss-ln"/></pattern>
+      ${op.mask}
       <pattern id="hatchExtra" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(135)"><rect width="14" height="14" class="extra-bg"/><line x1="0" y1="0" x2="0" y2="14" class="extra-ln"/></pattern></defs>
     <g clip-path="url(#house)">${wedges}</g>
     ${PLAN.missing.map(d => `<path d="${d}" fill="url(#hatchMiss)" class="area"/>`).join("")}${PLAN.extra.map(d => `<path d="${d}" fill="url(#hatchExtra)" class="area"/>`).join("")}
-    <g class="walls">${rooms}<path d="${PLAN.outline}" class="outline"/></g>
+    <g class="walls" mask="url(#wallGaps)">${rooms}<path d="${PLAN.outline}" class="outline"/></g>
+    ${op.symbols}
     <g class="names">${roomNames}</g>
     ${labels}
     <g data-act="fs-zone" data-z="centro" class="centre ${sel === "centro" ? "sel" : ""}"><circle cx="${cx}" cy="${cy}" r="34"/><title>${esc(T("fsZones").centro.name)}</title>
