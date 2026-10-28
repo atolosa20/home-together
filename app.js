@@ -474,6 +474,7 @@ function viewGroceries() {
     <select id="gCat">${GROC_KEYS.map(k => `<option value="${k}" ${k === ui.grocCat ? "selected" : ""}>${esc(T("grocCats")[k])}</option>`).join("")}</select>
     <input type="text" id="gStore" list="storeList" value="${esc(f)}" placeholder="${esc(T("anyShopPh"))}" autocomplete="off" style="flex:1 1 120px">
     <datalist id="storeList">${knownStores().map(x => `<option value="${esc(x)}">`).join("")}</datalist>
+    <label class="toggle"><input type="checkbox" id="gBought"> ${T("alreadyBought")}</label>
     <button class="btn">${T("add")}</button>
   </form>
   ${shops.length ? `<div class="shops" role="group" aria-label="${esc(T("shopFilterLbl"))}">
@@ -523,6 +524,7 @@ function viewNeeds() {
     <input type="text" id="nStore" list="shopList" placeholder="${esc(T("shopOrWeb"))}" autocomplete="off">
     <input type="url" id="nLink" placeholder="${esc(T("link"))}" autocomplete="off">
     <input type="text" id="nNotes" class="grow" placeholder="${esc(T("nNotes"))}">
+    <label class="toggle"><input type="checkbox" id="nBought"> ${T("alreadyBought")}</label>
     <button class="btn">${T("add")}</button>
   </form>
   ${groups.length ? groups.map(([k, items]) => `<section class="sec"><span class="eyebrow">${esc(T("needCats")[k])}</span><div class="card list">${items.map(row).join("")}</div></section>`).join("")
@@ -1939,7 +1941,7 @@ document.addEventListener("click", async ev => {
       save({ t: "chores", kind: "update", id, values: opts[(cur + 1) % opts.length] });
       return;
     }
-    case "often": addGrocery(b.dataset.name, "", b.dataset.cat, b.dataset.store || ""); return;
+    case "often": addGrocery(b.dataset.name, "", b.dataset.cat, b.dataset.store || "", !!$("#gBought")?.checked); return;
     case "shop-filter": {
       ui.shopFilter = b.dataset.v; try { localStorage.setItem("ht-shopFilter", ui.shopFilter); } catch (e) {}
       ["gStore", "fStore"].forEach(i => { const el = document.getElementById(i); if (el) el.value = ui.shopFilter; }); // render() keeps typed values
@@ -2046,7 +2048,7 @@ document.addEventListener("submit", async ev => {
     const name = v("gName"), qty = v("gQty"); if (!name) return; ui.grocCat = v("gCat"); try { localStorage.setItem("ht-grocCat", ui.grocCat); } catch (e) {}
     const store = v("gStore") || rememberedStore(name);
     $("#gName").value = ""; $("#gQty").value = ""; $("#gStore").value = ui.shopFilter;
-    addGrocery(name, qty, ui.grocCat, store); $("#gName")?.focus();
+    addGrocery(name, qty, ui.grocCat, store, $("#gBought").checked); $("#gName")?.focus();
   }
   if (f.id === "fChoreEdit") saveRoutine(f);
   if (f.id === "fSupply") saveSupply(f);
@@ -2092,6 +2094,8 @@ document.addEventListener("submit", async ev => {
     const title = v("nTitle"); if (!title) return; ui.needCat = v("nCat");
     const values = { id: uuid(), title, cat: ui.needCat, price: v("nPrice"), store: v("nStore"), link: v("nLink"), notes: v("nNotes") };
     ["nTitle", "nPrice", "nStore", "nLink", "nNotes"].forEach(i => $("#" + i).value = "");
+    // Already bought: saved as bought and straight into Spending (asks the price if there isn't one).
+    if ($("#nBought").checked) { $("#nBought").checked = false; save({ t: "needs", kind: "insert", values: { ...values, done: true, done_by: me } }); needBought(values); return; }
     save({ t: "needs", kind: "insert", values, notify: ["need", title] }, "added");
   }
   if (f.id === "fDogEdit") saveDog();
@@ -2134,7 +2138,9 @@ document.addEventListener("change", ev => {
   }
   if (ev.target.id === "fileAdd" && ui.filesFor) { const { kind, id } = ui.filesFor; uploadFiles(kind, id, [...ev.target.files]); ev.target.value = ""; }
 });
-function addGrocery(name, qty, cat, store = "") {
+// Already bought: straight into the basket (no "added to the list" notification; finishing the shop tells the other person).
+function addGrocery(name, qty, cat, store = "", bought = false) {
+  if (bought) { save({ t: "groceries", kind: "insert", values: { id: uuid(), name, qty, cat, store, done: true } }, "addedBasket"); return; }
   save({ t: "groceries", kind: "insert", values: { id: uuid(), name, qty, cat, store }, notify: ["grocery", store ? `${name} (${store})` : name] });
 }
 
